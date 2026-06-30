@@ -24,6 +24,8 @@
     .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     .settings-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
     .row { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+    .prompt-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .add-prompt-btn { width: 36px; min-height: 36px; padding: 0; border-radius: 8px; background: #e0f2fe; color: #0369a1; border-color: #7dd3fc; font-size: 24px; line-height: 1; display: inline-grid; place-items: center; }
     .log { white-space: pre-wrap; background: #101828; color: #f9fafb; border-radius: 8px; padding: 12px; min-height: 150px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; overflow: auto; }
     .status { color: #0f766e; font-weight: 700; margin-top: 10px; }
     .muted { color: #667085; font-size: 13px; }
@@ -76,6 +78,10 @@
           <div class="row">
             <label style="margin:0;">나눠진 프롬프트 칸</label>
             <span class="muted">실행 시 이 칸 순서대로 1개씩 전송</span>
+          </div>
+          <div class="prompt-heading" style="margin:8px 0;">
+            <span class="muted">프롬프트 칸 추가</span>
+            <button id="addPromptBtn" class="add-prompt-btn" type="button" title="프롬프트 칸 20개 추가">+</button>
           </div>
           <div class="prompt-grid" id="promptGrid"></div>
         </div>
@@ -155,8 +161,9 @@
   </main>
 
   <script>
-    const maxPrompts = 20;
-    const prompts = Array(maxPrompts).fill("");
+    const promptChunkSize = 20;
+    const maxPrompts = 200;
+    const prompts = Array(promptChunkSize).fill("");
     const $ = (id) => document.getElementById(id);
     const grid = $("promptGrid");
     let latestStatus = { running: false, paused: false, progressMessage: "대기 중" };
@@ -218,6 +225,19 @@
           prompts[Number(event.target.dataset.index)] = event.target.value;
         });
       });
+    }
+
+    function addPromptChunk() {
+      const start = prompts.length + 1;
+      if (prompts.length >= maxPrompts) {
+        alert(`최대 ${maxPrompts}개까지 만들 수 있습니다.`);
+        return;
+      }
+      for (let i = 0; i < promptChunkSize && prompts.length < maxPrompts; i++) {
+        prompts.push("");
+      }
+      render();
+      document.getElementById(`prompt${start - 1}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
 
     async function post(url, body = {}) {
@@ -357,6 +377,8 @@
       parsed.forEach((prompt, index) => prompts[index] = prompt);
       render();
     });
+
+    $("addPromptBtn").addEventListener("click", addPromptChunk);
 
     $("checkBtn").addEventListener("click", async () => {
       try {

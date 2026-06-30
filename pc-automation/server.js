@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const outputRoot = path.join(rootDir, "ShortsAutoOutput");
 const profileDir = path.join(rootDir, ".chatgpt-profile");
-const maxPrompts = 20;
+const maxPrompts = 200;
 const cdpUrl = process.env.EDGE_CDP_URL || "http://127.0.0.1:9222";
 const edgePaths = [
   "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
