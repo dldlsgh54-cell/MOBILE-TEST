@@ -10,6 +10,13 @@ const outputRoot = path.join(rootDir, "ShortsAutoOutput");
 const profileDir = path.join(rootDir, ".chatgpt-profile");
 const maxPrompts = 200;
 const cdpUrl = process.env.EDGE_CDP_URL || "http://127.0.0.1:9222";
+const typingSettleMs = 150;
+const sendSettleMs = 150;
+const promptSentPollMs = 200;
+const promptSentTimeoutMs = 10000;
+const promptSubmitMaxAttempts = 3;
+const generationPollMs = 2000;
+const promptGapMs = 500;
 const edgePaths = [
   "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
@@ -71,7 +78,7 @@ function resetBrowserRefs() {
   connectedByCdp = false;
 }
 
-async function ensureBrowser() {
+async function ensureBrowser({ allowLaunch = true } = {}) {
   if (browserContext) {
     try {
       page = await pickWorkingPage(browserContext);
@@ -90,6 +97,8 @@ async function ensureBrowser() {
     log("Connected to existing Edge browser.");
     return browserContext;
   }
+
+  if (!allowLaunch) return null;
 
   connectedByCdp = false;
   browserContext = await launchEdgeContext();
@@ -142,30 +151,50 @@ async function pickWorkingPage(context) {
   return selected;
 }
 
-async function ensureChatGptPage(targetUrl = "") {
-  await ensureBrowser();
-  const normalizedTarget = targetUrl ? normalizeTargetUrl(targetUrl) : "";
+function getOpenPages() {
+  return browserContext.pages().filter((candidate) => !candidate.isClosed());
+}
+
+function findChatGptPage(pages, normalizedTarget = "") {
+  const reversedPages = [...pages].reverse();
   if (normalizedTarget) {
-    const pages = browserContext.pages().filter((candidate) => !candidate.isClosed());
-    const targetPage = [...pages].reverse().find((candidate) => candidate.url() === normalizedTarget || candidate.url().startsWith(normalizedTarget));
-    page = targetPage || page || pages[pages.length - 1] || await browserContext.newPage();
-    if (!isChatGptUrl(page.url()) || page.url() !== normalizedTarget) {
-      await page.goto(normalizedTarget, { waitUntil: "domcontentloaded" });
-    }
+    const targetPage = reversedPages.find((candidate) => {
+      const currentUrl = candidate.url();
+      return currentUrl === normalizedTarget || currentUrl.startsWith(normalizedTarget);
+    });
+    if (targetPage) return targetPage;
+  }
+  return reversedPages.find((candidate) => isChatGptUrl(candidate.url())) || null;
+}
+
+async function ensureChatGptPage(targetUrl = "", { allowLaunch = true } = {}) {
+  const context = await ensureBrowser({ allowLaunch });
+  if (!context) return { found: false, page: null };
+
+  const normalizedTarget = targetUrl ? normalizeTargetUrl(targetUrl) : "";
+  const pages = getOpenPages();
+  const chatPage = findChatGptPage(pages, normalizedTarget);
+
+  if (chatPage) {
+    page = chatPage;
     await page.bringToFront().catch(() => {});
     return { found: true, page };
   }
 
-  page = await pickWorkingPage(browserContext);
-  if (isChatGptUrl(page.url())) {
+  if (normalizedTarget && !connectedByCdp) {
+    page = page && !page.isClosed() ? page : pages[pages.length - 1] || await browserContext.newPage();
+    await page.goto(normalizedTarget, { waitUntil: "domcontentloaded" });
     await page.bringToFront().catch(() => {});
     return { found: true, page };
   }
+
+  page = page && !page.isClosed() ? page : pages[pages.length - 1] || null;
+  if (page) await page.bringToFront().catch(() => {});
   return { found: false, page };
 }
 
 async function getConnectionStatus(targetUrl = "") {
-  const result = await ensureChatGptPage(targetUrl);
+  const result = await ensureChatGptPage(targetUrl, { allowLaunch: false });
   const title = page ? await page.title().catch(() => "") : "";
   const url = page ? page.url() : "";
   return {
@@ -175,7 +204,7 @@ async function getConnectionStatus(targetUrl = "") {
     url,
     message: result.found
       ? "ChatGPT tab connected."
-      : "ChatGPT tab was not found. Open chatgpt.com in Edge first."
+      : "ChatGPT tab was not found. Open Edge with run-edge-debug-chatgpt.bat, then open chatgpt.com."
   };
 }
 
@@ -254,7 +283,7 @@ async function clickPromptCoordinateFallback() {
 async function fillPromptBox(box, prompt) {
   await box.click();
   await typePromptText(prompt);
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(typingSettleMs);
   let text = (await getPromptBoxText(box)).trim();
   if (!text) {
     await box.evaluate((element, value) => {
@@ -262,7 +291,7 @@ async function fillPromptBox(box, prompt) {
       else element.textContent = value;
       element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
     }, prompt);
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(typingSettleMs);
     text = (await getPromptBoxText(box)).trim();
   }
   if (!text) throw new Error("Prompt was not inserted into the input box.");
@@ -298,7 +327,7 @@ async function clickSend() {
     }
     const fallbackClicked = await clickSendCoordinateFallback();
     if (fallbackClicked) return true;
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(sendSettleMs);
   }
   throw new Error("Send button was not active.");
 }
@@ -334,32 +363,43 @@ async function countUserMessages() {
 
 async function waitForPromptSent(box, beforeUserMessages) {
   const start = Date.now();
-  while (Date.now() - start < 12000) {
+  while (Date.now() - start < promptSentTimeoutMs) {
     const afterUserMessages = await countUserMessages();
     if (afterUserMessages > beforeUserMessages) return true;
-    await page.waitForTimeout(400);
-  }
-  const text = (await getPromptBoxText(box)).trim();
-  if (!text) {
-    throw new Error("Input became empty, but no new user message appeared in ChatGPT.");
+    const text = box ? (await getPromptBoxText(box)).trim() : "";
+    const stopVisible = await countStopButtons();
+    if (!text && stopVisible > 0) return true;
+    await page.waitForTimeout(promptSentPollMs);
   }
   return false;
 }
 
 async function submitPrompt(prompt) {
-  const box = await findPromptBox();
-  const beforeUserMessages = await countUserMessages();
-  if (box) {
-    await fillPromptBox(box, prompt);
-  } else {
-    const clicked = await clickPromptCoordinateFallback();
-    if (!clicked) throw new Error("ChatGPT input box was not found.");
-    await typePromptText(prompt);
+  let lastError = null;
+  for (let attempt = 1; attempt <= promptSubmitMaxAttempts; attempt++) {
+    const box = await findPromptBox();
+    const beforeUserMessages = await countUserMessages();
+    try {
+      if (box) {
+        await fillPromptBox(box, prompt);
+      } else {
+        const clicked = await clickPromptCoordinateFallback();
+        if (!clicked) throw new Error("ChatGPT input box was not found.");
+        await typePromptText(prompt);
+      }
+      await page.waitForTimeout(sendSettleMs);
+      await clickSend();
+      const sent = await waitForPromptSent(box, beforeUserMessages);
+      if (sent) return true;
+      lastError = new Error(`Prompt was not accepted within ${Math.floor(promptSentTimeoutMs / 1000)} seconds.`);
+      log(`Prompt submit attempt ${attempt}/${promptSubmitMaxAttempts} did not continue. Retrying same prompt.`);
+    } catch (error) {
+      lastError = error;
+      log(`Prompt submit attempt ${attempt}/${promptSubmitMaxAttempts} failed: ${error.message}`);
+    }
+    await page.waitForTimeout(1000);
   }
-  await page.waitForTimeout(700);
-  await clickSend();
-  const sent = await waitForPromptSent(box, beforeUserMessages);
-  if (!sent) throw new Error("No new user message appeared in ChatGPT.");
+  throw lastError || new Error("No new user message appeared in ChatGPT.");
 }
 
 async function countStopButtons() {
@@ -391,7 +431,7 @@ async function waitUntilGenerationSettles(index, total) {
     } else {
       stableChecks = 0;
     }
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(generationPollMs);
   }
   return false;
 }
@@ -420,7 +460,7 @@ async function runAutomation({ projectName, prompts, targetUrl }) {
       const settled = await waitUntilGenerationSettles(i + 1, prompts.length);
       if (!settled) log(`Prompt ${i + 1} timed out.`);
       setProgress(`Prompt ${i + 1}/${prompts.length} done. No download.`);
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(promptGapMs);
     }
 
     setProgress(`Done. Output folder: ${projectDir}`);

@@ -13,4 +13,4 @@ if not defined EDGE (
 
 echo Close all Edge windows first if the program cannot connect to your current ChatGPT tab.
 echo Opening Edge with remote debugging on port 9222...
-start "" "%EDGE%" --remote-debugging-port=9222 --remote-allow-origins=* "https://chatgpt.com/"
+start "" "%EDGE%" --user-data-dir="%~dp0.chatgpt-profile" --remote-debugging-port=9222 --remote-allow-origins=* "https://chatgpt.com/"

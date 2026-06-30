@@ -17,5 +17,6 @@ captures/
 .cxx/
 actions-log/
 build-log-artifact/
+ShortsAutoOutput/
 *.zip
 pc-automation-server.log
