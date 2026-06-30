@@ -36,13 +36,34 @@ jobs:
           gradle-version: "8.7"
 
       - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace
+        shell: bash
+        run: |
+          set +e
+          gradle :app:assembleDebug --stacktrace 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "Gradle build failed. Last 200 log lines:"
+              tail -n 200 build.log
+            } > build-error-summary.txt
+            echo "::error file=.github/workflows/android-debug-apk.yml,line=1::$(tail -n 80 build.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/:/%3A/g')"
+            exit "$status"
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: shorts-auto-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-log
+          path: |
+            build.log
+            build-error-summary.txt
 
       - name: Publish latest debug APK release
         uses: softprops/action-gh-release@v2
