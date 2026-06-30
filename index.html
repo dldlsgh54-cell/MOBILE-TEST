@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>쇼츠 이미지 자동생성 v1.0</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --surface: #ffffff;
+      --ink: #1c2430;
+      --muted: #667085;
+      --line: #d8dee8;
+      --accent: #0f766e;
+      --accent-strong: #115e59;
+      --warn: #b45309;
+      --done: #15803d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    main {
+      width: min(980px, 100%);
+      margin: 0 auto;
+      padding: 18px;
+    }
+    header {
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 14px;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(24px, 6vw, 34px);
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+    .subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      margin: 12px 0;
+    }
+    label {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+    textarea, input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 11px 12px;
+      font: inherit;
+      background: #fff;
+      color: var(--ink);
+    }
+    textarea {
+      min-height: 150px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+    .prompt-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .prompt textarea {
+      min-height: 118px;
+      font-size: 14px;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    button, a.button {
+      border: 1px solid transparent;
+      border-radius: 8px;
+      min-height: 42px;
+      padding: 9px 13px;
+      font: inherit;
+      font-weight: 700;
+      background: var(--accent);
+      color: white;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+    button.secondary, a.secondary {
+      background: #fff;
+      color: var(--ink);
+      border-color: var(--line);
+    }
+    button.warn {
+      background: #fff7ed;
+      color: var(--warn);
+      border-color: #fed7aa;
+    }
+    button.done {
+      background: #ecfdf3;
+      color: var(--done);
+      border-color: #bbf7d0;
+    }
+    button:disabled {
+      opacity: .55;
+      cursor: not-allowed;
+    }
+    .status {
+      display: grid;
+      gap: 8px;
+    }
+    .progress {
+      height: 12px;
+      overflow: hidden;
+      background: #e5e7eb;
+      border-radius: 999px;
+    }
+    .bar {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      transition: width .2s ease;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .current {
+      border-color: #99f6e4;
+      box-shadow: 0 0 0 2px rgba(20, 184, 166, .16);
+    }
+    .log {
+      white-space: pre-wrap;
+      background: #101828;
+      color: #f9fafb;
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 110px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+      overflow: auto;
+    }
+    .hidden { display: none; }
+    @media (max-width: 760px) {
+      main { padding: 14px; }
+      header { display: block; }
+      .prompt-grid { grid-template-columns: 1fr; }
+      button, a.button { width: 100%; }
+      .controls { display: grid; grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>쇼츠 이미지 자동생성 v1.0</h1>
+        <p class="subtitle">HTML 보조판: 프롬프트 6개를 분리하고 순서대로 복사해서 ChatGPT에서 이미지 생성합니다.</p>
+      </div>
+      <a class="button secondary" href="https://chatgpt.com/" target="_blank" rel="noopener">ChatGPT 열기</a>
+    </header>
+
+    <section class="panel">
+      <label for="projectName">프로젝트명</label>
+      <input id="projectName" value="shorts_project" autocomplete="off">
+    </section>
+
+    <section class="panel">
+      <label for="sourceText">ChatGPT에서 받은 이미지 프롬프트 전체</label>
+      <textarea id="sourceText" placeholder="컷1: ...&#10;&#10;컷2: ...&#10;&#10;또는 Prompt 1: ... 형식으로 붙여넣으세요."></textarea>
+      <div class="controls">
+        <button id="pasteBtn" type="button">클립보드 붙여넣기</button>
+        <button id="splitBtn" type="button">프롬프트 1~6 자동 분리</button>
+        <button id="clearBtn" class="secondary" type="button">초기화</button>
+      </div>
+      <p class="muted">브라우저 보안상 ChatGPT를 자동 조작하거나 이미지를 자동 저장할 수는 없습니다. 대신 각 프롬프트를 한 번에 복사하고 진행 상태를 기록합니다.</p>
+    </section>
+
+    <section class="panel status">
+      <div class="row">
+        <strong id="statusText">대기 중</strong>
+        <span class="muted" id="counterText">0/6 완료</span>
+      </div>
+      <div class="progress"><div class="bar" id="progressBar"></div></div>
+      <div class="controls">
+        <button id="copyCurrentBtn" type="button">현재 프롬프트 복사</button>
+        <button id="nextBtn" class="secondary" type="button">다음 프롬프트</button>
+        <button id="doneBtn" class="done" type="button">현재 완료 표시</button>
+        <button id="downloadBtn" class="secondary" type="button">prompts/log 저장</button>
+      </div>
+    </section>
+
+    <section class="prompt-grid" id="promptGrid"></section>
+
+    <section class="panel">
+      <div class="row">
+        <strong>로그</strong>
+        <button id="copyAllBtn" class="secondary" type="button">전체 프롬프트 복사</button>
+      </div>
+      <div id="log" class="log">아직 기록이 없습니다.</div>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      prompts: Array(6).fill(""),
+      current: 0,
+      done: Array(6).fill(false),
+      log: []
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const grid = $("promptGrid");
+
+    function stamp() {
+      return new Date().toLocaleTimeString("ko-KR", { hour12: false });
+    }
+
+    function addLog(message) {
+      state.log.unshift(`[${stamp()}] ${message}`);
+      $("log").textContent = state.log.join("\n") || "아직 기록이 없습니다.";
+      saveLocal();
+    }
+
+    function parsePrompts(raw) {
+      const text = raw.replace(/\r/g, "").trim();
+      if (!text) return [];
+
+      const lines = text.split("\n");
+      const blocks = [];
+      let current = "";
+      const label = /^(?:#{1,6}\s*)?(?:컷|프롬프트|prompt|cut)?\s*([1-6])\s*(?:[\).:\-]|번)?\s*(.*)$/i;
+
+      function flush() {
+        const value = current.trim();
+        if (value) blocks.push(value);
+        current = "";
+      }
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) {
+          if (current) current += "\n";
+          continue;
+        }
+        const match = line.match(label);
+        const isLabel = match && (
+          /컷|프롬프트|prompt|cut/i.test(line) ||
+          /^[1-6]\s*[\).:\-]/.test(line)
+        );
+        if (isLabel) {
+          flush();
+          current = (match[2] || "").trim();
+        } else if (current) {
+          current += (current.endsWith("\n") ? "" : "\n") + line;
+        }
+      }
+      flush();
+      if (blocks.length) return blocks.slice(0, 6);
+
+      const paragraphs = text.split(/\n\s*\n/).map(v => v.trim()).filter(Boolean);
+      if (paragraphs.length >= 2) return paragraphs.slice(0, 6);
+
+      return lines.map(v => v.trim().replace(/^[-*]\s*/, "")).filter(v => v.length >= 8).slice(0, 6);
+    }
+
+    function render() {
+      grid.innerHTML = "";
+      state.prompts.forEach((prompt, index) => {
+        const box = document.createElement("section");
+        box.className = `panel prompt ${index === state.current ? "current" : ""}`;
+        box.innerHTML = `
+          <label for="prompt${index}">프롬프트 ${index + 1}${state.done[index] ? " 완료" : ""}</label>
+          <textarea id="prompt${index}" data-index="${index}"></textarea>
+          <div class="controls">
+            <button type="button" data-copy="${index}">복사</button>
+            <button type="button" class="done" data-done="${index}">완료</button>
+          </div>
+        `;
+        grid.appendChild(box);
+        box.querySelector("textarea").value = prompt;
+      });
+
+      grid.querySelectorAll("textarea").forEach(area => {
+        area.addEventListener("input", (event) => {
+          state.prompts[Number(event.target.dataset.index)] = event.target.value;
+          saveLocal();
+        });
+      });
+      grid.querySelectorAll("[data-copy]").forEach(btn => {
+        btn.addEventListener("click", () => copyPrompt(Number(btn.dataset.copy)));
+      });
+      grid.querySelectorAll("[data-done]").forEach(btn => {
+        btn.addEventListener("click", () => markDone(Number(btn.dataset.done)));
+      });
+
+      updateStatus();
+    }
+
+    function updateStatus() {
+      const doneCount = state.done.filter(Boolean).length;
+      $("counterText").textContent = `${doneCount}/6 완료`;
+      $("progressBar").style.width = `${Math.round(doneCount / 6 * 100)}%`;
+      $("statusText").textContent = state.prompts[state.current]
+        ? `현재 프롬프트 ${state.current + 1}`
+        : "프롬프트를 입력하거나 자동 분리하세요";
+      saveLocal();
+    }
+
+    async function copyText(text) {
+      if (!text.trim()) {
+        alert("복사할 내용이 없습니다.");
+        return false;
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        const temp = document.createElement("textarea");
+        temp.value = text;
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand("copy");
+        temp.remove();
+        return true;
+      }
+    }
+
+    async function copyPrompt(index) {
+      const ok = await copyText(state.prompts[index]);
+      if (ok) {
+        state.current = index;
+        addLog(`프롬프트 ${index + 1} 복사`);
+        render();
+      }
+    }
+
+    function markDone(index) {
+      state.done[index] = true;
+      state.current = Math.min(5, index + 1);
+      addLog(`프롬프트 ${index + 1} 완료 표시`);
+      render();
+    }
+
+    function saveLocal() {
+      localStorage.setItem("shortsAutoHtml", JSON.stringify(state));
+    }
+
+    function loadLocal() {
+      try {
+        const saved = JSON.parse(localStorage.getItem("shortsAutoHtml") || "{}");
+        if (Array.isArray(saved.prompts)) state.prompts = saved.prompts.slice(0, 6).concat(Array(6).fill("")).slice(0, 6);
+        if (Array.isArray(saved.done)) state.done = saved.done.slice(0, 6).concat(Array(6).fill(false)).slice(0, 6);
+        if (Array.isArray(saved.log)) state.log = saved.log;
+        if (Number.isInteger(saved.current)) state.current = Math.min(5, Math.max(0, saved.current));
+      } catch {}
+    }
+
+    function downloadFile(name, content) {
+      const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    $("pasteBtn").addEventListener("click", async () => {
+      try {
+        $("sourceText").value = await navigator.clipboard.readText();
+        addLog("클립보드 붙여넣기");
+      } catch {
+        alert("브라우저가 클립보드 읽기를 막았습니다. 직접 붙여넣어 주세요.");
+      }
+    });
+
+    $("splitBtn").addEventListener("click", () => {
+      const parsed = parsePrompts($("sourceText").value);
+      if (!parsed.length) {
+        alert("프롬프트를 찾지 못했습니다.");
+        return;
+      }
+      parsed.forEach((prompt, index) => {
+        state.prompts[index] = prompt;
+        state.done[index] = false;
+      });
+      state.current = 0;
+      addLog(`프롬프트 ${parsed.length}개 자동 분리`);
+      render();
+    });
+
+    $("clearBtn").addEventListener("click", () => {
+      if (!confirm("입력값과 진행 상태를 초기화할까요?")) return;
+      state.prompts = Array(6).fill("");
+      state.done = Array(6).fill(false);
+      state.current = 0;
+      state.log = [];
+      $("sourceText").value = "";
+      localStorage.removeItem("shortsAutoHtml");
+      render();
+      $("log").textContent = "아직 기록이 없습니다.";
+    });
+
+    $("copyCurrentBtn").addEventListener("click", () => copyPrompt(state.current));
+    $("nextBtn").addEventListener("click", () => {
+      state.current = Math.min(5, state.current + 1);
+      addLog(`프롬프트 ${state.current + 1}로 이동`);
+      render();
+    });
+    $("doneBtn").addEventListener("click", () => markDone(state.current));
+    $("copyAllBtn").addEventListener("click", async () => {
+      const all = state.prompts.map((p, i) => `Prompt ${i + 1}: ${p}`).join("\n\n");
+      if (await copyText(all)) addLog("전체 프롬프트 복사");
+    });
+    $("downloadBtn").addEventListener("click", () => {
+      const project = ($("projectName").value || "shorts_project").replace(/[\\/:*?"<>|]/g, "_");
+      const prompts = state.prompts.map((p, i) => `Prompt ${i + 1}\n${p}`).join("\n\n");
+      const log = state.log.join("\n");
+      downloadFile(`${project}_prompts_and_log.txt`, `${prompts}\n\n--- log ---\n${log}\n`);
+    });
+
+    loadLocal();
+    render();
+    if (state.log.length) $("log").textContent = state.log.join("\n");
+  </script>
+</body>
+</html>

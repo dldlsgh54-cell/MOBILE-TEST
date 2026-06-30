@@ -2,6 +2,25 @@
 
 Kotlin, Jetpack Compose, Accessibility Service, Foreground Service로 만든 Android Studio 프로젝트입니다. OpenAI API를 쓰지 않고 ChatGPT 앱 또는 웹 화면을 접근성 노드 중심으로 자동 조작합니다.
 
+## HTML 보조판
+
+APK 설치가 Android 보안 정책에 막히면 `index.html`을 웹으로 사용할 수 있습니다.
+
+접속 주소:
+
+```text
+https://dldlsgh54-cell.github.io/Application/
+```
+
+HTML 버전은 브라우저 보안 때문에 ChatGPT를 자동 조작하거나 이미지를 자동 저장할 수 없습니다. 대신 다음 기능을 제공합니다.
+
+- ChatGPT에서 받은 프롬프트 전체 붙여넣기
+- 컷1~컷6, Prompt 1~Prompt 6 기준 자동 분리
+- 현재 프롬프트 복사
+- ChatGPT 열기
+- 완료 체크
+- prompts/log 텍스트 파일 다운로드
+
 ## 주요 기능
 
 - 프로젝트명 입력
