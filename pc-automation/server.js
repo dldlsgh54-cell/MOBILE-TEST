@@ -152,9 +152,14 @@ async function getConnectionStatus() {
 
 async function findPromptBox() {
   const selectors = [
+    "#prompt-textarea",
+    "[data-testid='composer-root'] [contenteditable='true']",
+    "form [contenteditable='true']",
+    "div[contenteditable='true'][id='prompt-textarea']",
     "textarea",
     "[contenteditable='true']",
     "div.ProseMirror",
+    "[data-placeholder*='무엇이든 물어보세요']",
     "[data-placeholder*='Message']",
     "[data-placeholder*='무엇이든']",
     "[aria-label*='Message']",
@@ -171,49 +176,79 @@ async function findPromptBox() {
   return null;
 }
 
+async function fillPromptBox(box, prompt) {
+  await box.click();
+  try {
+    await box.fill(prompt);
+    return;
+  } catch {
+    // contenteditable editors sometimes reject fill(); keyboard insertion is the fallback.
+  }
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await page.keyboard.insertText(prompt);
+}
+
 async function clickSend() {
   const candidates = [
     "button[data-testid='send-button']",
+    "button[data-testid='composer-submit-button']",
+    "button[aria-label*='Send prompt']",
+    "button[aria-label*='프롬프트 보내기']",
     "button[aria-label*='Send']",
     "button[aria-label*='send']",
     "button[aria-label*='전송']",
-    "button:has-text('Send')"
+    "button:has-text('Send')",
+    "form button:not([disabled])"
   ];
-  for (const selector of candidates) {
-    const button = page.locator(selector).last();
-    if (await button.count()) {
-      const enabled = await button.isEnabled().catch(() => false);
-      const visible = await button.isVisible().catch(() => false);
-      if (enabled && visible) {
-        await button.click();
-        return true;
+
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    for (const selector of candidates) {
+      const button = page.locator(selector).last();
+      if (await button.count()) {
+        const enabled = await button.isEnabled().catch(() => false);
+        const visible = await button.isVisible().catch(() => false);
+        if (enabled && visible) {
+          await button.click();
+          return true;
+        }
       }
     }
+    await page.waitForTimeout(300);
   }
-  await page.keyboard.press("Enter");
-  return true;
+
+  throw new Error("전송 버튼이 활성화되지 않았습니다.");
 }
 
 async function submitPrompt(prompt) {
   const box = await findPromptBox();
   if (!box) throw new Error("ChatGPT 입력창을 찾지 못했습니다.");
-  await box.click();
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-  await page.keyboard.type(prompt, { delay: 1 });
-  await page.waitForTimeout(500);
+  await fillPromptBox(box, prompt);
+  await page.waitForTimeout(700);
   await clickSend();
+  await page.waitForTimeout(3000);
 }
 
 async function waitUntilGenerationSettles() {
   const start = Date.now();
+  let stableChecks = 0;
   while (Date.now() - start < 240000) {
-    const stopVisible = await page.locator("button:has-text('Stop'), button[aria-label*='Stop'], button[aria-label*='중지']").count().catch(() => 0);
-    const generatingText = await page.locator("text=/generating|creating|이미지 생성|생성 중/i").count().catch(() => 0);
+    const stopVisible = await page.locator([
+      "button:has-text('Stop')",
+      "button:has-text('중지')",
+      "button:has-text('중단')",
+      "button[aria-label*='Stop']",
+      "button[aria-label*='중지']",
+      "button[aria-label*='중단']"
+    ].join(", ")).count().catch(() => 0);
+    const generatingText = await page.locator("text=/generating|creating|drawing|이미지 생성|생성 중|만드는 중/i").count().catch(() => 0);
     if (!stopVisible && !generatingText) {
-      await page.waitForTimeout(5000);
-      return true;
+      stableChecks += 1;
+      if (Date.now() - start > 15000 && stableChecks >= 3) return true;
+    } else {
+      stableChecks = 0;
     }
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(5000);
   }
   return false;
 }
