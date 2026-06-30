@@ -35,12 +35,25 @@ function sanitize(value) {
 async function ensureBrowser() {
   if (browserContext) return browserContext;
   await fs.mkdir(outputRoot, { recursive: true });
-  browserContext = await chromium.launchPersistentContext(profileDir, {
+  const launchOptions = {
+    channel: process.env.BROWSER_CHANNEL || "chrome",
     headless: false,
     acceptDownloads: true,
     viewport: { width: 1280, height: 900 },
     downloadsPath: outputRoot
-  });
+  };
+  try {
+    browserContext = await chromium.launchPersistentContext(profileDir, launchOptions);
+  } catch (error) {
+    if (launchOptions.channel === "chrome") {
+      browserContext = await chromium.launchPersistentContext(profileDir, {
+        ...launchOptions,
+        channel: "msedge"
+      });
+    } else {
+      throw error;
+    }
+  }
   page = browserContext.pages()[0] || await browserContext.newPage();
   page.setDefaultTimeout(10000);
   return browserContext;

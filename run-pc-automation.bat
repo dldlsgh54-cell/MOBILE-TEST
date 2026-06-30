@@ -15,12 +15,6 @@ if not exist "node_modules" (
   if errorlevel 1 goto fail
 )
 
-if not exist "%LOCALAPPDATA%\ms-playwright" (
-  echo Installing Playwright Chromium...
-  call npm.cmd run setup
-  if errorlevel 1 goto fail
-)
-
 start "" "http://localhost:3737"
 call npm.cmd start
 exit /b 0
