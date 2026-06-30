@@ -1,14 +1,18 @@
 package com.example.shortsauto
 
-import android.content.ClipboardManager
-import android.content.Context
-import android.content.Intent
+import android.content.ContentValues
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
+import android.os.Environment
+import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,7 +21,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -28,238 +31,230 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
-import com.example.shortsauto.accessibility.ChatGptAccessibilityService
-import com.example.shortsauto.automation.ChatGptAutomationService
-import com.example.shortsauto.automation.ClipboardPromptParser
-import com.example.shortsauto.automation.PromptRepository
+import java.io.File
+import java.io.FileOutputStream
+import kotlin.math.floor
 
 class MainActivity : ComponentActivity() {
-    private val prompts = mutableStateListOf("", "", "", "", "", "")
-    private var projectName by mutableStateOf("shorts_project")
-    private var logText by mutableStateOf("")
-    private var progressText by mutableStateOf("ChatGPT에서 이미지 프롬프트를 복사하면 자동으로 감지합니다.")
+    private val selectedImages = mutableStateListOf<Uri>()
+    private var colsText by mutableStateOf("4")
+    private var rowsText by mutableStateOf("2")
+    private var aspectRatio by mutableStateOf("auto")
+    private var resolution by mutableStateOf("original")
+    private var saveFolderName by mutableStateOf("ShortsAutoSplit")
+    private var statusText by mutableStateOf("갤러리에서 통합 이미지를 선택하세요.")
     private var progressValue by mutableFloatStateOf(0f)
-    private var isRunning by mutableStateOf(false)
-    private var showCompletionDialog by mutableStateOf(false)
-    private var completionMessage by mutableStateOf("")
-    private var lastClipboardText = ""
-    private var clipboardManager: ClipboardManager? = null
-    private val clipboardListener = ClipboardManager.OnPrimaryClipChangedListener {
-        detectClipboardPrompts(showToast = true, force = false)
-    }
-
-    private val progressReceiver = object : android.content.BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action != ChatGptAutomationService.BROADCAST_PROGRESS) return
-            progressText = intent.getStringExtra(ChatGptAutomationService.EXTRA_STATUS).orEmpty()
-            progressValue = intent.getFloatExtra(ChatGptAutomationService.EXTRA_PROGRESS, progressValue)
-            logText = PromptRepository.readLog(this@MainActivity, projectName)
-            isRunning = intent.getBooleanExtra(ChatGptAutomationService.EXTRA_RUNNING, isRunning)
-            if (intent.getBooleanExtra(ChatGptAutomationService.EXTRA_COMPLETE, false)) {
-                completionMessage = progressText.ifBlank { "이미지 생성이 완료되었습니다." }
-                showCompletionDialog = true
-            }
-        }
-    }
+    private var isSaving by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboardManager?.addPrimaryClipChangedListener(clipboardListener)
         setContent {
             ShortsAutoTheme {
-                DisposableEffect(Unit) {
-                    val filter = android.content.IntentFilter(ChatGptAutomationService.BROADCAST_PROGRESS)
-                    ContextCompat.registerReceiver(
-                        this@MainActivity,
-                        progressReceiver,
-                        filter,
-                        ContextCompat.RECEIVER_NOT_EXPORTED
-                    )
-                    onDispose { unregisterReceiver(progressReceiver) }
-                }
-                AppUi(
-                    projectName = projectName,
-                    prompts = prompts,
-                    logText = logText,
-                    progressText = progressText,
+                SplitOnlyUi(
+                    selectedCount = selectedImages.size,
+                    colsText = colsText,
+                    rowsText = rowsText,
+                    aspectRatio = aspectRatio,
+                    resolution = resolution,
+                    saveFolderName = saveFolderName,
+                    statusText = statusText,
                     progressValue = progressValue,
-                    isRunning = isRunning,
-                    showCompletionDialog = showCompletionDialog,
-                    completionMessage = completionMessage,
-                    onProjectNameChange = { projectName = PromptRepository.sanitizeProjectName(it) },
-                    onPromptChange = { index, value -> prompts[index] = value },
-                    onStart = { startAutomation() },
-                    onPause = { sendServiceAction(ChatGptAutomationService.ACTION_PAUSE) },
-                    onStop = { sendServiceAction(ChatGptAutomationService.ACTION_STOP) },
-                    onOpenFolder = { openOutputFolder() },
-                    onParseClipboard = { parseClipboardPrompts() },
-                    onReadScreenText = { readScreenTextPrompts() },
-                    onOpenAccessibility = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
-                    onDismissCompletion = { showCompletionDialog = false }
+                    isSaving = isSaving,
+                    onImagesSelected = {
+                        selectedImages.clear()
+                        selectedImages.addAll(it)
+                        statusText = "${it.size}개 통합 이미지를 선택했습니다."
+                        progressValue = 0f
+                    },
+                    onColsChange = { colsText = it.filter(Char::isDigit).take(2) },
+                    onRowsChange = { rowsText = it.filter(Char::isDigit).take(2) },
+                    onAspectRatioChange = { aspectRatio = it },
+                    onResolutionChange = { resolution = it },
+                    onSaveFolderChange = { saveFolderName = sanitizeFolderName(it) },
+                    onRunSplit = { splitSelectedImages() }
                 )
             }
         }
-        handleLaunchIntent(intent)
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handleLaunchIntent(intent)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        detectClipboardPrompts(showToast = false, force = false)
-        fillMissingFromScreen(showToast = false)
-    }
-
-    override fun onDestroy() {
-        clipboardManager?.removePrimaryClipChangedListener(clipboardListener)
-        super.onDestroy()
-    }
-
-    private fun handleLaunchIntent(intent: Intent?) {
-        if (intent?.getBooleanExtra(ChatGptAutomationService.EXTRA_COMPLETE, false) == true) {
-            completionMessage = intent.getStringExtra(ChatGptAutomationService.EXTRA_STATUS)
-                ?: "전체 이미지 생성 작업이 완료되었습니다."
-            progressText = completionMessage
-            progressValue = 1f
-            isRunning = false
-            showCompletionDialog = true
-        }
-    }
-
-    private fun startAutomation() {
-        detectClipboardPrompts(showToast = false, force = true)
-        fillMissingFromScreen(showToast = false)
-        val usablePrompts = prompts.map { it.trim() }.filter { it.isNotBlank() }.take(6)
-        if (usablePrompts.isEmpty()) {
-            Toast.makeText(this, "프롬프트를 1개 이상 입력하세요.", Toast.LENGTH_SHORT).show()
+    private fun splitSelectedImages() {
+        if (selectedImages.isEmpty()) {
+            Toast.makeText(this, "먼저 갤러리에서 이미지를 선택하세요.", Toast.LENGTH_SHORT).show()
             return
         }
-        val safeProjectName = PromptRepository.sanitizeProjectName(projectName.ifBlank { "shorts_project" })
-        projectName = safeProjectName
-        PromptRepository.savePrompts(this, prompts.toList(), safeProjectName)
-        logText = ""
-        isRunning = true
-        progressText = "자동화 시작"
+
+        val cols = colsText.toIntOrNull()?.coerceIn(1, 20) ?: 4
+        val rows = rowsText.toIntOrNull()?.coerceIn(1, 20) ?: 2
+        colsText = cols.toString()
+        rowsText = rows.toString()
+        val folderName = sanitizeFolderName(saveFolderName.ifBlank { "ShortsAutoSplit" })
+        saveFolderName = folderName
+
+        isSaving = true
         progressValue = 0f
-        showCompletionDialog = false
-        val intent = Intent(this, ChatGptAutomationService::class.java).apply {
-            action = ChatGptAutomationService.ACTION_START
-            putExtra(ChatGptAutomationService.EXTRA_PROJECT_NAME, safeProjectName)
-            putExtra(ChatGptAutomationService.EXTRA_PROMPTS, usablePrompts.toTypedArray())
-        }
-        ContextCompat.startForegroundService(this, intent)
+        statusText = "이미지 분할 저장을 시작합니다."
+
+        Thread {
+            val totalPieces = selectedImages.size * cols * rows
+            var savedCount = 0
+            var failedCount = 0
+
+            selectedImages.forEachIndexed { sourceIndex, uri ->
+                val sourceBitmap = loadBitmap(uri)
+                if (sourceBitmap == null) {
+                    failedCount++
+                    updateProgress(savedCount, totalPieces, "이미지 ${sourceIndex + 1}을 읽지 못했습니다.")
+                    return@forEachIndexed
+                }
+
+                try {
+                    splitBitmap(sourceBitmap, cols, rows).forEachIndexed { pieceIndex, bitmap ->
+                        val fileName = "${sourceIndex + 1}-${pieceIndex + 1}.png"
+                        if (saveBitmapToGallery(bitmap, folderName, fileName)) {
+                            savedCount++
+                        } else {
+                            failedCount++
+                        }
+                        bitmap.recycle()
+                        updateProgress(savedCount, totalPieces, "${savedCount}/${totalPieces}개 저장 중")
+                    }
+                } finally {
+                    sourceBitmap.recycle()
+                }
+            }
+
+            runOnUiThread {
+                isSaving = false
+                progressValue = 1f
+                statusText = if (failedCount == 0) {
+                    "${savedCount}개 이미지를 갤러리의 ${folderName} 폴더에 저장했습니다."
+                } else {
+                    "${savedCount}개 저장, ${failedCount}개 실패했습니다."
+                }
+                Toast.makeText(this, statusText, Toast.LENGTH_LONG).show()
+            }
+        }.start()
     }
 
-    private fun sendServiceAction(action: String) {
-        ContextCompat.startForegroundService(
-            this,
-            Intent(this, ChatGptAutomationService::class.java).setAction(action)
-        )
-    }
-
-    private fun parseClipboardPrompts() {
-        if (!detectClipboardPrompts(showToast = true, force = true)) {
-            Toast.makeText(this, "클립보드에서 프롬프트를 찾지 못했습니다.", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun detectClipboardPrompts(showToast: Boolean, force: Boolean): Boolean {
-        val manager = clipboardManager ?: getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val text = manager.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
-        if (text.isBlank() || (!force && text == lastClipboardText)) return false
-        val parsed = ClipboardPromptParser.parse(text)
-        if (parsed.isEmpty()) return false
-        lastClipboardText = text
-        val filled = fillEmptyPromptSlots(parsed)
-        if (filled == 0) {
-            progressText = "직접 입력된 프롬프트를 유지했습니다. 자동 감지 내용은 덮어쓰지 않았습니다."
-            if (showToast) Toast.makeText(this, "직접 입력된 프롬프트를 유지했습니다.", Toast.LENGTH_SHORT).show()
-            return true
-        }
-        progressText = "클립보드 감지 완료: 빈 칸 ${filled}개 자동 입력"
-        logText = "ChatGPT 복사 텍스트에서 빈 프롬프트 ${filled}개를 자동 입력했습니다.\n$logText"
-        if (showToast) {
-            Toast.makeText(this, "빈 프롬프트 ${filled}개 자동 입력 완료", Toast.LENGTH_SHORT).show()
-        }
-        return true
-    }
-
-    private fun readScreenTextPrompts() {
-        fillMissingFromScreen(showToast = true)
-    }
-
-    private fun fillMissingFromScreen(showToast: Boolean): Boolean {
-        if (prompts.none { it.isBlank() }) return true
-        if (!ChatGptAccessibilityService.isConnected()) {
-            val message = "접근성 서비스가 꺼져 있습니다. 접근성 설정을 켠 뒤, 실패하면 ChatGPT에서 전체 프롬프트를 복사하세요."
-            if (showToast) progressText = message
-            if (showToast) Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-            return false
-        }
-
-        val screenText = ChatGptAccessibilityService.readCurrentScreenText()
-        val parsed = ClipboardPromptParser.parseScreenText(screenText)
-        if (parsed.isEmpty()) {
-            val message = "화면 텍스트에서 이미지 프롬프트를 찾지 못했습니다. ChatGPT에서 컷1~컷6 또는 Prompt 1~Prompt 6 전체를 복사하세요."
-            if (showToast) progressText = message
-            if (showToast) Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-            return false
-        }
-
-        val filled = fillEmptyPromptSlots(parsed)
-        if (filled == 0) {
-            progressText = "직접 입력된 프롬프트를 유지했습니다. 화면 텍스트는 덮어쓰지 않았습니다."
-            if (showToast) Toast.makeText(this, "직접 입력된 프롬프트를 유지했습니다.", Toast.LENGTH_SHORT).show()
-            return false
-        }
-        progressText = "화면 텍스트 읽기 완료: 빈 칸 ${filled}개 자동 입력"
-        logText = "ChatGPT 화면 텍스트에서 빈 프롬프트 ${filled}개를 자동 입력했습니다.\n$logText"
-        if (showToast) Toast.makeText(this, "화면에서 빈 프롬프트 ${filled}개 입력 완료", Toast.LENGTH_SHORT).show()
-        return true
-    }
-
-    private fun fillEmptyPromptSlots(candidates: List<String>): Int {
-        var candidateIndex = 0
-        var filled = 0
-        for (slot in prompts.indices) {
-            if (prompts[slot].isNotBlank()) continue
-            while (candidateIndex < candidates.size && candidates[candidateIndex].isBlank()) candidateIndex++
-            if (candidateIndex >= candidates.size) break
-            prompts[slot] = candidates[candidateIndex].trim()
-            candidateIndex++
-            filled++
-        }
-        return filled
-    }
-
-    private fun openOutputFolder() {
-        val dir = PromptRepository.projectDir(this, projectName)
-        dir.mkdirs()
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(Uri.parse(dir.toURI().toString()), "resource/folder")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        runCatching { startActivity(intent) }.onFailure {
-            Toast.makeText(this, "파일 앱에서 ${dir.absolutePath} 경로를 여세요.", Toast.LENGTH_LONG).show()
+    private fun updateProgress(savedCount: Int, totalPieces: Int, message: String) {
+        runOnUiThread {
+            progressValue = if (totalPieces == 0) 0f else savedCount.toFloat() / totalPieces
+            statusText = message
         }
     }
 
+    private fun loadBitmap(uri: Uri): Bitmap? {
+        return runCatching {
+            contentResolver.openInputStream(uri)?.use { input ->
+                BitmapFactory.decodeStream(input)
+            }
+        }.getOrNull()
+    }
+
+    private fun splitBitmap(source: Bitmap, cols: Int, rows: Int): List<Bitmap> {
+        val gap = 0
+        val margin = 0
+        val cellW = ((source.width - margin * 2 - gap * (cols - 1)) / cols).coerceAtLeast(1)
+        val cellH = ((source.height - margin * 2 - gap * (rows - 1)) / rows).coerceAtLeast(1)
+        val ratio = ratioToNumber(aspectRatio)
+        val crop = fitCropToRatio(cellW, cellH, ratio)
+        val pieces = mutableListOf<Bitmap>()
+
+        for (row in 0 until rows) {
+            for (col in 0 until cols) {
+                val x = margin + col * (cellW + gap) + crop.offsetX
+                val y = margin + row * (cellH + gap) + crop.offsetY
+                val cropped = Bitmap.createBitmap(source, x, y, crop.width, crop.height)
+                val outputSize = resolveOutputSize(crop.width, crop.height)
+                val output = if (outputSize.width == cropped.width && outputSize.height == cropped.height) {
+                    cropped
+                } else {
+                    val scaled = Bitmap.createScaledBitmap(cropped, outputSize.width, outputSize.height, true)
+                    cropped.recycle()
+                    scaled
+                }
+                pieces.add(output)
+            }
+        }
+        return pieces
+    }
+
+    private fun ratioToNumber(value: String): Float? {
+        if (value == "auto") return null
+        val parts = value.split(":").mapNotNull { it.toFloatOrNull() }
+        if (parts.size != 2 || parts[1] == 0f) return null
+        return parts[0] / parts[1]
+    }
+
+    private fun fitCropToRatio(width: Int, height: Int, ratio: Float?): CropRect {
+        if (ratio == null) return CropRect(width, height, 0, 0)
+        val current = width.toFloat() / height
+        return if (current > ratio) {
+            val targetW = floor(height * ratio).toInt().coerceAtLeast(1)
+            CropRect(targetW, height, (width - targetW) / 2, 0)
+        } else {
+            val targetH = floor(width / ratio).toInt().coerceAtLeast(1)
+            CropRect(width, targetH, 0, (height - targetH) / 2)
+        }
+    }
+
+    private fun resolveOutputSize(width: Int, height: Int): OutputSize {
+        if (resolution == "original") return OutputSize(width, height)
+        val ratio = ratioToNumber(aspectRatio) ?: (width.toFloat() / height)
+        val portrait = ratio <= 1f
+        val longEdge = if (resolution == "4k") 3840 else 2560
+        val shortEdge = if (resolution == "4k") 2160 else 1440
+        return if (portrait) OutputSize(shortEdge, longEdge) else OutputSize(longEdge, shortEdge)
+    }
+
+    private fun saveBitmapToGallery(bitmap: Bitmap, folderName: String, fileName: String): Boolean {
+        return runCatching {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                val pictures = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+                val targetDir = File(pictures, folderName).apply { mkdirs() }
+                val targetFile = File(targetDir, fileName)
+                FileOutputStream(targetFile).use { output ->
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+                }
+                sendBroadcast(android.content.Intent(android.content.Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(targetFile)))
+                return@runCatching true
+            }
+
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/$folderName")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+
+            val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            val uri = contentResolver.insert(collection, values) ?: return false
+            contentResolver.openOutputStream(uri)?.use { output ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+            } ?: return false
+
+            values.clear()
+            values.put(MediaStore.Images.Media.IS_PENDING, 0)
+            contentResolver.update(uri, values, null, null)
+            true
+        }.getOrDefault(false)
+    }
+
+    private fun sanitizeFolderName(value: String): String {
+        return value.replace(Regex("""[\\/:*?"<>|]"""), "_").trim()
+    }
+
+    private data class CropRect(val width: Int, val height: Int, val offsetX: Int, val offsetY: Int)
+    private data class OutputSize(val width: Int, val height: Int)
 }
 
 @Composable
@@ -270,39 +265,29 @@ private fun ShortsAutoTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-fun AppUi(
-    projectName: String,
-    prompts: List<String>,
-    logText: String,
-    progressText: String,
+private fun SplitOnlyUi(
+    selectedCount: Int,
+    colsText: String,
+    rowsText: String,
+    aspectRatio: String,
+    resolution: String,
+    saveFolderName: String,
+    statusText: String,
     progressValue: Float,
-    isRunning: Boolean,
-    showCompletionDialog: Boolean,
-    completionMessage: String,
-    onProjectNameChange: (String) -> Unit,
-    onPromptChange: (Int, String) -> Unit,
-    onStart: () -> Unit,
-    onPause: () -> Unit,
-    onStop: () -> Unit,
-    onOpenFolder: () -> Unit,
-    onParseClipboard: () -> Unit,
-    onReadScreenText: () -> Unit,
-    onOpenAccessibility: () -> Unit,
-    onDismissCompletion: () -> Unit
+    isSaving: Boolean,
+    onImagesSelected: (List<Uri>) -> Unit,
+    onColsChange: (String) -> Unit,
+    onRowsChange: (String) -> Unit,
+    onAspectRatioChange: (String) -> Unit,
+    onResolutionChange: (String) -> Unit,
+    onSaveFolderChange: (String) -> Unit,
+    onRunSplit: () -> Unit
 ) {
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        if (uris.isNotEmpty()) onImagesSelected(uris)
+    }
+
     Scaffold { innerPadding ->
-        if (showCompletionDialog) {
-            AlertDialog(
-                onDismissRequest = onDismissCompletion,
-                confirmButton = {
-                    TextButton(onClick = onDismissCompletion) {
-                        Text("확인")
-                    }
-                },
-                title = { Text("이미지 생성 완료") },
-                text = { Text(completionMessage.ifBlank { "전체 이미지 생성 작업이 완료되었습니다." }) }
-            )
-        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -311,50 +296,100 @@ fun AppUi(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("쇼츠 이미지 자동생성 v1.0", style = MaterialTheme.typography.headlineSmall)
-            Text(
-                "ChatGPT에서 이미지 프롬프트 복사 -> 앱 자동 감지 -> 프롬프트 1~6 자동 분리 -> 시작",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            OutlinedTextField(
-                value = projectName,
-                onValueChange = onProjectNameChange,
-                label = { Text("프로젝트명") },
-                singleLine = true,
+            Text("통합 이미지 분할", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("갤러리에서 통합 이미지를 선택하면 순서대로 잘라 갤러리에 저장합니다.")
+
+            Button(
+                onClick = { imagePicker.launch("image/*") },
+                enabled = !isSaving,
                 modifier = Modifier.fillMaxWidth()
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = onStart, modifier = Modifier.weight(1f)) { Text(if (isRunning) "실행 중" else "시작") }
-                OutlinedButton(onClick = onPause, modifier = Modifier.weight(1f)) { Text("일시정지") }
-                OutlinedButton(onClick = onStop, modifier = Modifier.weight(1f)) { Text("중지") }
+            ) {
+                Text(if (selectedCount == 0) "갤러리에서 이미지 선택" else "선택된 이미지 ${selectedCount}개")
             }
-            LinearProgressIndicator(progress = { progressValue.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
-            Text(progressText, style = MaterialTheme.typography.bodyMedium)
-            prompts.forEachIndexed { index, prompt ->
-                OutlinedTextField(
-                    value = prompt,
-                    onValueChange = { onPromptChange(index, it) },
-                    label = { Text("프롬프트 ${index + 1}") },
-                    minLines = 2,
-                    maxLines = 5,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = onParseClipboard, modifier = Modifier.weight(1f)) { Text("클립보드 불러오기") }
-                OutlinedButton(onClick = onReadScreenText, modifier = Modifier.weight(1f)) { Text("화면 텍스트 읽기") }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = onOpenFolder, modifier = Modifier.weight(1f)) { Text("저장 폴더 열기") }
-                OutlinedButton(onClick = onOpenAccessibility, modifier = Modifier.weight(1f)) { Text("접근성 설정") }
-            }
+
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("로그", style = MaterialTheme.typography.titleMedium)
-                    Text(logText.ifBlank { "아직 기록이 없습니다." }, style = MaterialTheme.typography.bodySmall)
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = colsText,
+                            onValueChange = onColsChange,
+                            label = { Text("가로") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = rowsText,
+                            onValueChange = onRowsChange,
+                            label = { Text("세로") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    OptionRow(
+                        title = "비율",
+                        value = aspectRatio,
+                        options = listOf("auto", "9:16", "16:9", "1:1"),
+                        labels = listOf("원본", "9:16", "16:9", "1:1"),
+                        onChange = onAspectRatioChange,
+                        enabled = !isSaving
+                    )
+                    OptionRow(
+                        title = "해상도",
+                        value = resolution,
+                        options = listOf("original", "2k", "4k"),
+                        labels = listOf("원본", "2K", "4K"),
+                        onChange = onResolutionChange,
+                        enabled = !isSaving
+                    )
+                    OutlinedTextField(
+                        value = saveFolderName,
+                        onValueChange = onSaveFolderChange,
+                        label = { Text("갤러리 저장 폴더명") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+
+            Button(onClick = onRunSplit, enabled = !isSaving, modifier = Modifier.fillMaxWidth()) {
+                Text(if (isSaving) "저장 중" else "분할해서 갤러리에 저장")
+            }
+            LinearProgressIndicator(progress = { progressValue.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+            Text(statusText)
+        }
+    }
+}
+
+@Composable
+private fun OptionRow(
+    title: String,
+    value: String,
+    options: List<String>,
+    labels: List<String>,
+    onChange: (String) -> Unit,
+    enabled: Boolean
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            options.forEachIndexed { index, option ->
+                val selected = option == value
+                val label = labels.getOrElse(index) { option }
+                if (selected) {
+                    Button(
+                        onClick = { onChange(option) },
+                        enabled = enabled,
+                        modifier = Modifier.weight(1f)
+                    ) { Text(label) }
+                } else {
+                    OutlinedButton(
+                        onClick = { onChange(option) },
+                        enabled = enabled,
+                        modifier = Modifier.weight(1f)
+                    ) { Text(label) }
                 }
             }
         }
