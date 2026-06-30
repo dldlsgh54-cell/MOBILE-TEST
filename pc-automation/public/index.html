@@ -16,6 +16,11 @@
     textarea { min-height: 120px; resize: vertical; line-height: 1.45; }
     button { border: 1px solid transparent; border-radius: 8px; min-height: 42px; padding: 9px 13px; font: inherit; font-weight: 700; cursor: pointer; background: #0f766e; color: white; }
     button.secondary { background: #fff; color: #172033; border-color: #d9e0ea; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .run-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .option-btn { background: #fff; color: #172033; border-color: #d9e0ea; display: inline-flex; align-items: center; gap: 6px; }
+    .option-btn.active { background: #0f766e; color: #fff; border-color: #0f766e; }
+    .option-icon { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 999px; border: 1px solid currentColor; font-size: 13px; line-height: 1; }
     .window-title { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 12px; }
     .two-pane { display: grid; grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.4fr); gap: 12px; align-items: start; }
     .prompt-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-height: 680px; overflow: auto; padding-right: 4px; }
@@ -37,6 +42,7 @@
       main { padding: 14px; }
       .two-pane, .settings-grid, .prompt-grid { grid-template-columns: 1fr; }
       button { width: 100%; }
+      .run-actions { width: 100%; display: grid; }
       .controls { display: grid; }
     }
   </style>
@@ -55,7 +61,7 @@
       <input id="chatgptUrl" placeholder="https://chatgpt.com/g/.../c/...">
       <div class="controls">
         <button id="checkBtn" class="secondary" type="button">ChatGPT 연결 확인</button>
-        <button id="pathBtn" class="secondary" type="button">저장 위치 보기</button>
+        <button id="pathBtn" class="secondary" type="button" disabled>이미지 다운로드 저장위치</button>
       </div>
       <p id="connectStatus" class="status">아직 연결 확인 전입니다.</p>
     </section>
@@ -66,7 +72,17 @@
           <strong>창 1. 프롬프트 전체 붙여넣기</strong>
           <p>컷1, 이미지1, Prompt1 같은 형식을 자동으로 읽고 오른쪽 칸에 나눕니다.</p>
         </div>
-        <button id="runBtn" type="button">프로그램 실행</button>
+        <div class="run-actions">
+          <button id="downloadOptionBtn" class="option-btn" type="button" title="ChatGPT 이미지 생성 완료 후 큰 이미지를 모두 저장">
+            <span class="option-icon">↓</span>
+            <span>이미지다운로드</span>
+          </button>
+          <button id="connectSplitOptionBtn" class="option-btn" type="button" title="창 1 완료 후 저장된 이미지를 창 2 분할로 연결">
+            <span class="option-icon">2</span>
+            <span>2번 연결</span>
+          </button>
+          <button id="runBtn" type="button">프로그램 실행</button>
+        </div>
       </div>
       <div class="two-pane">
         <div>
@@ -111,6 +127,10 @@
           <label for="splitImage">통합된 이미지 넣는 칸 (JPG, PNG 호환)</label>
           <input id="splitImage" type="file" accept="image/png,image/jpeg,image/jpg,image/webp,image/*">
           <div class="controls">
+            <button id="chooseSplitSourceFolderBtn" class="secondary" type="button">통합 이미지 폴더 선택</button>
+          </div>
+          <p id="splitSourceFolderStatus" class="status">입력 폴더: 선택 안 됨</p>
+          <div class="controls">
             <button id="chooseFolderBtn" class="secondary" type="button">나눠진 이미지 저장 경로 선택</button>
           </div>
           <p id="folderStatus" class="status">저장 경로: 브라우저 기본 다운로드 폴더</p>
@@ -137,8 +157,8 @@
               </select>
             </div>
             <div>
-              <label for="splitPrefix">파일명 앞부분</label>
-              <input id="splitPrefix" value="shorts_image">
+              <label for="splitFolderName">저장할 폴더명</label>
+              <input id="splitFolderName" value="split_images" placeholder="예: shorts_split_images">
             </div>
           </div>
           <div class="settings-grid">
@@ -150,9 +170,17 @@
               <label for="splitMargin">바깥 여백(px)</label>
               <input id="splitMargin" type="number" min="0" max="500" value="0">
             </div>
+            <div>
+              <label for="outputResolution">해상도</label>
+              <select id="outputResolution">
+                <option value="original">원본 크기</option>
+                <option value="2k" selected>2K용</option>
+                <option value="4k">4K용</option>
+              </select>
+            </div>
           </div>
           <div class="controls">
-            <button id="previewSplitBtn" type="button">분할 미리보기</button>
+            <button id="runSplitOnlyBtn" type="button">2번창만 프로그램 실행</button>
             <button id="downloadSplitBtn" class="secondary" type="button">분할 이미지 저장</button>
           </div>
           <p id="splitStatus" class="status">통합 이미지를 선택하세요.</p>
@@ -172,6 +200,13 @@
     let dotTick = 0;
     let splitPieces = [];
     let saveDirectoryHandle = null;
+    let splitSourceFolderFiles = [];
+    let imageDownloadDir = "";
+    let lastConnectedRunId = null;
+    const runOptions = {
+      downloadImages: false,
+      connectSplit: false
+    };
 
     function parsePrompts(raw) {
       const text = raw.replace(/\r/g, "").trim();
@@ -253,14 +288,32 @@
       return json;
     }
 
-    function loadSelectedImage() {
-      const file = $("splitImage").files?.[0];
-      if (!file) throw new Error("분할할 통합 이미지를 먼저 선택하세요.");
+    function isImageFile(file) {
+      return file?.type?.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(file?.name || "");
+    }
+
+    function loadImageFromFile(file) {
       return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => resolve(img);
         img.onerror = () => reject(new Error("이미지를 읽지 못했습니다."));
         img.src = URL.createObjectURL(file);
+      });
+    }
+
+    function getSelectedImageFiles() {
+      const inputFiles = [...($("splitImage").files || [])].filter(isImageFile);
+      if (inputFiles.length) return inputFiles;
+      if (splitSourceFolderFiles.length) return splitSourceFolderFiles;
+      throw new Error("분할할 통합 이미지 파일 또는 폴더를 먼저 선택하세요.");
+    }
+
+    function loadImageFromUrl(url) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("연결된 이미지를 읽지 못했습니다."));
+        img.src = url;
       });
     }
 
@@ -281,8 +334,26 @@
       return { width, height: targetH, offsetX: 0, offsetY: Math.floor((height - targetH) / 2) };
     }
 
-    async function buildSplitPieces() {
-      const img = await loadSelectedImage();
+    function sanitizePathPart(value, fallback) {
+      return (value || fallback).replace(/[\\/:*?"<>|]/g, "_").trim() || fallback;
+    }
+
+    function resolveOutputSize(width, height) {
+      const resolution = $("outputResolution").value;
+      if (resolution === "original") return { width, height };
+
+      const ratio = ratioToNumber($("aspectRatio").value) || (width / height);
+      const portrait = ratio <= 1;
+      const longEdge = resolution === "4k" ? 3840 : 2560;
+      const shortEdge = resolution === "4k" ? 2160 : 1440;
+
+      if (portrait) {
+        return { width: shortEdge, height: longEdge };
+      }
+      return { width: longEdge, height: shortEdge };
+    }
+
+    function buildSplitPiecesFromImage(img, startIndex = 0, sourceIndex = null) {
       const cols = Math.max(1, Number($("splitCols").value || 1));
       const rows = Math.max(1, Number($("splitRows").value || 1));
       const gap = Math.max(0, Number($("splitGap").value || 0));
@@ -297,10 +368,12 @@
       for (let row = 0; row < rows; row++) {
         for (let col = 0; col < cols; col++) {
           const canvas = document.createElement("canvas");
-          canvas.width = crop.width;
-          canvas.height = crop.height;
+          const outputSize = resolveOutputSize(crop.width, crop.height);
+          canvas.width = outputSize.width;
+          canvas.height = outputSize.height;
           const ctx = canvas.getContext("2d", { alpha: false });
-          ctx.imageSmoothingEnabled = false;
+          ctx.imageSmoothingEnabled = outputSize.width !== crop.width || outputSize.height !== crop.height;
+          ctx.imageSmoothingQuality = "high";
           ctx.drawImage(
             img,
             margin + col * (cellW + gap) + crop.offsetX,
@@ -309,17 +382,32 @@
             crop.height,
             0,
             0,
-            crop.width,
-            crop.height
+            outputSize.width,
+            outputSize.height
           );
+          const pieceIndex = pieces.length + 1;
           pieces.push({
-            index: pieces.length + 1,
-            width: crop.width,
-            height: crop.height,
+            index: startIndex + pieceIndex,
+            sourceIndex,
+            pieceIndex,
+            fileStem: sourceIndex ? `${sourceIndex}-${pieceIndex}` : "",
+            width: outputSize.width,
+            height: outputSize.height,
             blobPromise: new Promise(resolve => canvas.toBlob(resolve, "image/png")),
             url: canvas.toDataURL("image/png")
           });
         }
+      }
+      return pieces;
+    }
+
+    async function buildSplitPieces() {
+      const files = getSelectedImageFiles();
+      const pieces = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const img = await loadImageFromFile(file);
+        pieces.push(...buildSplitPiecesFromImage(img, pieces.length, i + 1));
       }
       return pieces;
     }
@@ -339,18 +427,26 @@
       $("splitStatus").textContent = `${splitPieces.length}개 이미지로 분할했습니다. 선택 비율 기준으로 원본 픽셀을 crop합니다.`;
     }
 
+    async function getTargetDirectoryHandle() {
+      if (!saveDirectoryHandle) return null;
+      const folderName = sanitizePathPart($("splitFolderName").value, "split_images");
+      return await saveDirectoryHandle.getDirectoryHandle(folderName, { create: true });
+    }
+
     async function saveBlobToDirectory(blob, fileName) {
-      const fileHandle = await saveDirectoryHandle.getFileHandle(fileName, { create: true });
+      const targetDirectoryHandle = await getTargetDirectoryHandle();
+      const fileHandle = await targetDirectoryHandle.getFileHandle(fileName, { create: true });
       const writable = await fileHandle.createWritable();
       await writable.write(blob);
       await writable.close();
     }
 
-    async function downloadSplitPieces() {
-      if (!splitPieces.length) throw new Error("먼저 분할 미리보기를 실행하세요.");
-      const prefix = ($("splitPrefix").value || "shorts_image").replace(/[\\/:*?"<>|]/g, "_");
+    async function downloadSplitPieces({ rebuild = false } = {}) {
+      if (rebuild || !splitPieces.length) {
+        splitPieces = await buildSplitPieces();
+      }
       for (const piece of splitPieces) {
-        const fileName = `${prefix}_${String(piece.index).padStart(2, "0")}.png`;
+        const fileName = `${piece.fileStem || `1-${piece.pieceIndex || piece.index}`}.png`;
         const blob = await piece.blobPromise;
         if (saveDirectoryHandle) {
           await saveBlobToDirectory(blob, fileName);
@@ -364,10 +460,51 @@
           await new Promise(resolve => setTimeout(resolve, 180));
         }
       }
+      const folderName = sanitizePathPart($("splitFolderName").value, "split_images");
       $("splitStatus").textContent = saveDirectoryHandle
-        ? `${splitPieces.length}개 이미지를 선택한 저장 경로에 저장했습니다.`
+        ? `${splitPieces.length}개 이미지를 선택한 저장 경로의 ${folderName} 폴더에 저장했습니다.`
         : `${splitPieces.length}개 이미지 다운로드를 시작했습니다.`;
     }
+
+    async function runConnectedSplit(downloadedImages) {
+      if (!downloadedImages?.length) {
+        $("splitStatus").textContent = "2번 연결 실패: 다운로드된 이미지가 없습니다.";
+        alert("2번 연결을 실행할 이미지가 없습니다. 이미지다운로드가 켜져 있는지 확인하세요.");
+        return;
+      }
+
+      $("splitPreview").innerHTML = "";
+      $("splitStatus").textContent = "2번 연결 실행 중입니다. 저장된 이미지를 분할합니다.";
+      splitPieces = [];
+      for (let i = 0; i < downloadedImages.length; i++) {
+        const image = downloadedImages[i];
+        const img = await loadImageFromUrl(image.url);
+        splitPieces.push(...buildSplitPiecesFromImage(img, splitPieces.length, i + 1));
+      }
+      await downloadSplitPieces({ rebuild: false });
+    }
+
+    function updateOptionButtons() {
+      $("downloadOptionBtn").classList.toggle("active", runOptions.downloadImages);
+      $("connectSplitOptionBtn").classList.toggle("active", runOptions.connectSplit);
+      $("pathBtn").disabled = !runOptions.downloadImages;
+    }
+
+    $("downloadOptionBtn").addEventListener("click", () => {
+      runOptions.downloadImages = !runOptions.downloadImages;
+      if (!runOptions.downloadImages) {
+        runOptions.connectSplit = false;
+        imageDownloadDir = "";
+        $("connectStatus").textContent = "이미지다운로드가 꺼져 있습니다.";
+      }
+      updateOptionButtons();
+    });
+
+    $("connectSplitOptionBtn").addEventListener("click", () => {
+      runOptions.connectSplit = !runOptions.connectSplit;
+      if (runOptions.connectSplit) runOptions.downloadImages = true;
+      updateOptionButtons();
+    });
 
     $("splitBtn").addEventListener("click", () => {
       const parsed = parsePrompts($("sourceText").value);
@@ -400,10 +537,18 @@
         } else if (latestStatus.running && latestStatus.paused) {
           await post("/api/resume");
         } else {
+          if ((runOptions.downloadImages || runOptions.connectSplit) && !imageDownloadDir) {
+            alert("저장 위치를 지정해주세요");
+            return;
+          }
           await post("/api/run", {
             projectName: $("projectName").value,
             targetUrl: $("chatgptUrl").value,
-            prompts
+            prompts,
+            options: {
+              downloadImages: runOptions.downloadImages || runOptions.connectSplit,
+              imageDownloadDir
+            }
           });
         }
         await poll(true);
@@ -413,9 +558,18 @@
     });
 
     $("pathBtn").addEventListener("click", async () => {
-      const res = await fetch("/api/output-path");
-      const json = await res.json();
-      alert(`저장 위치:\n${json.outputRoot}`);
+      if (!runOptions.downloadImages) {
+        alert("이미지다운로드를 활성화한 후 저장위치를 선택하세요.");
+        return;
+      }
+      try {
+        const json = await post("/api/select-image-download-folder");
+        if (!json.folderPath) return;
+        imageDownloadDir = json.folderPath;
+        $("connectStatus").textContent = `이미지 다운로드 저장위치: ${imageDownloadDir}`;
+      } catch (error) {
+        alert(error.message);
+      }
     });
 
     $("chooseFolderBtn").addEventListener("click", async () => {
@@ -427,9 +581,38 @@
       $("folderStatus").textContent = `저장 경로: ${saveDirectoryHandle.name}`;
     });
 
-    $("previewSplitBtn").addEventListener("click", async () => {
+    $("chooseSplitSourceFolderBtn").addEventListener("click", async () => {
+      if (!window.showDirectoryPicker) {
+        alert("이 브라우저는 폴더 직접 선택을 지원하지 않습니다.");
+        return;
+      }
+      const directoryHandle = await window.showDirectoryPicker();
+      const files = [];
+      for await (const entry of directoryHandle.values()) {
+        if (entry.kind !== "file") continue;
+        const file = await entry.getFile();
+        if (isImageFile(file)) files.push(file);
+      }
+      splitSourceFolderFiles = files.sort((a, b) => a.name.localeCompare(b.name, "ko-KR", { numeric: true }));
+      $("splitImage").value = "";
+      $("splitSourceFolderStatus").textContent = `입력 폴더: ${directoryHandle.name} / 이미지 ${splitSourceFolderFiles.length}개`;
+      $("splitStatus").textContent = splitSourceFolderFiles.length
+        ? "통합 이미지 폴더를 선택했습니다."
+        : "선택한 폴더에서 이미지 파일을 찾지 못했습니다.";
+    });
+
+    $("splitImage").addEventListener("change", () => {
+      if ($("splitImage").files?.length) {
+        splitSourceFolderFiles = [];
+        $("splitSourceFolderStatus").textContent = "입력 폴더: 선택 안 됨";
+      }
+    });
+
+    $("runSplitOnlyBtn").addEventListener("click", async () => {
       try {
-        await previewSplit();
+        $("splitPreview").innerHTML = "";
+        $("splitStatus").textContent = "2번창 이미지 분할 저장을 실행 중입니다.";
+        await downloadSplitPieces({ rebuild: true });
       } catch (error) {
         $("splitStatus").textContent = error.message;
         alert(error.message);
@@ -438,8 +621,9 @@
 
     $("downloadSplitBtn").addEventListener("click", async () => {
       try {
-        await downloadSplitPieces();
+        await downloadSplitPieces({ rebuild: true });
       } catch (error) {
+        $("splitStatus").textContent = error.message;
         alert(error.message);
       }
     });
@@ -458,6 +642,7 @@
       try {
         const res = await fetch("/api/status");
         const json = await res.json();
+        const wasRunning = latestStatus.running;
         latestStatus = json;
         updateRunButton();
         const dots = ".".repeat((dotTick++ % 4) + 1);
@@ -471,10 +656,21 @@
         $("log").textContent = json.log?.length
           ? `${progressLine}\n\n${json.log.join("\n")}`
           : `${progressLine}\n\n아직 기록이 없습니다.`;
+        if (
+          wasRunning &&
+          !json.running &&
+          runOptions.connectSplit &&
+          json.lastRunResult?.id &&
+          lastConnectedRunId !== json.lastRunResult.id
+        ) {
+          lastConnectedRunId = json.lastRunResult.id;
+          await runConnectedSplit(json.lastRunResult.downloadedImages || []);
+        }
       } catch {}
       if (!runOnce) setTimeout(poll, 700);
     }
 
+    updateOptionButtons();
     render();
     poll();
   </script>

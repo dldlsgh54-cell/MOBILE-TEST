@@ -1,7 +1,9 @@
 import express from "express";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { chromium } from "playwright";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -23,8 +25,10 @@ const edgePaths = [
 ];
 
 const app = express();
+const execFileAsync = promisify(execFile);
 app.use(express.json({ limit: "2mb" }));
 app.use(express.static(path.join(__dirname, "public")));
+app.use("/output", express.static(outputRoot));
 
 let browser = null;
 let browserContext = null;
@@ -34,6 +38,9 @@ let running = false;
 let paused = false;
 let progressMessage = "Idle";
 let currentLog = [];
+let lastRunId = 0;
+let lastRunResult = null;
+const downloadedFileMap = new Map();
 
 function now() {
   return new Date().toLocaleTimeString("ko-KR", { hour12: false });
@@ -56,6 +63,12 @@ async function waitIfPaused() {
 
 function sanitize(value) {
   return (value || "shorts_project").replace(/[\\/:*?"<>|]/g, "_").trim() || "shorts_project";
+}
+
+function normalizeLocalPath(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return path.resolve(raw);
 }
 
 function isChatGptUrl(url) {
@@ -436,12 +449,237 @@ async function waitUntilGenerationSettles(index, total) {
   return false;
 }
 
-async function runAutomation({ projectName, prompts, targetUrl }) {
+async function clickVisibleGeneratedImage() {
+  return await page.evaluate(() => {
+    const images = [...document.querySelectorAll("img")]
+      .map((img, order) => {
+        const rect = img.getBoundingClientRect();
+        return { img, order, rect, area: rect.width * rect.height };
+      })
+      .filter(({ rect, area }) =>
+        area > 40000 &&
+        rect.width > 180 &&
+        rect.height > 180 &&
+        rect.bottom > 0 &&
+        rect.right > 0 &&
+        rect.top < window.innerHeight &&
+        rect.left < window.innerWidth
+      )
+      .sort((a, b) => b.area - a.area || b.order - a.order);
+    const target = images[0]?.img;
+    if (!target) return false;
+    target.scrollIntoView({ block: "center", inline: "center" });
+    target.click();
+    return true;
+  });
+}
+
+async function openImageViewer() {
+  const opened = await clickVisibleGeneratedImage();
+  if (!opened) throw new Error("No generated image was visible to open.");
+  await page.waitForTimeout(1200);
+}
+
+async function scrollViewerThumbnailsTop() {
+  await page.evaluate(() => {
+    const leftImages = [...document.querySelectorAll("img")]
+      .map((img) => ({ img, rect: img.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.left < 220 && rect.width >= 24 && rect.height >= 24);
+    for (const { img } of leftImages) {
+      let parent = img.parentElement;
+      while (parent) {
+        const style = getComputedStyle(parent);
+        if ((style.overflowY === "auto" || style.overflowY === "scroll") && parent.scrollHeight > parent.clientHeight) {
+          parent.scrollTop = 0;
+          return;
+        }
+        parent = parent.parentElement;
+      }
+    }
+    window.scrollTo(0, 0);
+  });
+  await page.waitForTimeout(400);
+}
+
+async function getViewerThumbnailCount() {
+  return await page.evaluate(() => {
+    const seen = new Set();
+    return [...document.querySelectorAll("img")]
+      .map((img, order) => {
+        const rect = img.getBoundingClientRect();
+        const src = img.currentSrc || img.src || String(order);
+        return { src, rect };
+      })
+      .filter(({ rect }) =>
+        rect.left >= 40 &&
+        rect.left < 190 &&
+        rect.width >= 32 &&
+        rect.width <= 120 &&
+        rect.height >= 32 &&
+        rect.height <= 120
+      )
+      .filter(({ src }) => {
+        if (seen.has(src)) return false;
+        seen.add(src);
+        return true;
+      }).length;
+  });
+}
+
+async function clickViewerThumbnail(index) {
+  return await page.evaluate((targetIndex) => {
+    const seen = new Set();
+    const thumbnails = [...document.querySelectorAll("img")]
+      .map((img, order) => ({ img, order, rect: img.getBoundingClientRect(), src: img.currentSrc || img.src || String(order) }))
+      .filter(({ rect }) =>
+        rect.left >= 40 &&
+        rect.left < 190 &&
+        rect.width >= 32 &&
+        rect.width <= 120 &&
+        rect.height >= 32 &&
+        rect.height <= 120
+      )
+      .sort((a, b) => a.rect.top - b.rect.top || a.order - b.order)
+      .filter(({ src }) => {
+        if (seen.has(src)) return false;
+        seen.add(src);
+        return true;
+      });
+    const target = thumbnails[targetIndex]?.img;
+    if (!target) return false;
+    target.scrollIntoView({ block: "center", inline: "center" });
+    target.click();
+    return true;
+  }, index);
+}
+
+async function clickViewerDownloadButton() {
+  const labeled = [
+    "button[aria-label*='Download']",
+    "button[aria-label*='download']",
+    "button[aria-label*='다운로드']",
+    "button[aria-label*='내려받기']",
+    "button:has-text('Download')",
+    "button:has-text('다운로드')"
+  ];
+
+  for (const selector of labeled) {
+    const button = page.locator(selector).last();
+    if (await button.count()) {
+      const visible = await button.isVisible().catch(() => false);
+      if (visible) {
+        await button.click();
+        return true;
+      }
+    }
+  }
+
+  return await page.evaluate(() => {
+    const buttons = [...document.querySelectorAll("button")]
+      .map((button) => {
+        const rect = button.getBoundingClientRect();
+        const label = `${button.getAttribute("aria-label") || ""} ${button.textContent || ""} ${button.title || ""}`;
+        return { button, rect, label };
+      })
+      .filter(({ button, rect, label }) =>
+        !button.disabled &&
+        rect.width >= 24 &&
+        rect.height >= 24 &&
+        rect.top >= 0 &&
+        rect.top < 90 &&
+        rect.left > window.innerWidth * 0.82 &&
+        !/share|공유|more|더보기|댓글|종횡비/i.test(label)
+      )
+      .sort((a, b) => a.rect.left - b.rect.left);
+    const target = buttons[0]?.button;
+    if (!target) return false;
+    target.click();
+    return true;
+  });
+}
+
+function getDownloadExtension(download) {
+  const name = download.suggestedFilename() || "";
+  const ext = path.extname(name).replace(".", "").toLowerCase();
+  return ext || "png";
+}
+
+async function selectFolderWithDialog() {
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = '이미지 다운로드 저장위치 선택'
+$dialog.ShowNewFolderButton = $true
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  Write-Output $dialog.SelectedPath
+}
+`;
+  const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-STA", "-Command", script], {
+    windowsHide: false,
+    timeout: 120000
+  });
+  return stdout.trim();
+}
+
+async function downloadGeneratedImages(projectDir, imageDownloadDir, runId) {
+  const imageDir = imageDownloadDir ? normalizeLocalPath(imageDownloadDir) : path.join(projectDir, "downloaded_images");
+  await fs.mkdir(imageDir, { recursive: true });
+  const savedImages = [];
+
+  await openImageViewer();
+  await scrollViewerThumbnailsTop();
+  const thumbnailCount = await getViewerThumbnailCount();
+  if (!thumbnailCount) throw new Error("Image viewer thumbnails were not found.");
+
+  for (let i = 0; i < thumbnailCount; i++) {
+    await waitIfPaused();
+    const clicked = await clickViewerThumbnail(i);
+    if (!clicked) {
+      log(`Image thumbnail ${i + 1}/${thumbnailCount} was not found.`);
+      continue;
+    }
+    await page.waitForTimeout(700);
+
+    let download = null;
+    try {
+      const downloadPromise = page.waitForEvent("download", { timeout: 20000 });
+      const downloadClicked = await clickViewerDownloadButton();
+      if (!downloadClicked) {
+        downloadPromise.catch(() => {});
+        log(`Download button was not found for image ${i + 1}/${thumbnailCount}.`);
+        continue;
+      }
+      download = await downloadPromise;
+    } catch (error) {
+      log(`Image ${i + 1}/${thumbnailCount} download did not start: ${error.message}`);
+      continue;
+    }
+
+    const ext = getDownloadExtension(download);
+    const fileName = `chatgpt_image_${String(savedImages.length + 1).padStart(2, "0")}.${ext}`;
+    const filePath = path.join(imageDir, fileName);
+    await download.saveAs(filePath);
+    const fileKey = `${runId}-${savedImages.length + 1}`;
+    downloadedFileMap.set(fileKey, filePath);
+    savedImages.push({
+      fileName,
+      path: filePath,
+      url: `/api/downloaded-image/${fileKey}`
+    });
+    setProgress(`Downloaded image ${savedImages.length}/${thumbnailCount}.`);
+  }
+
+  return savedImages;
+}
+
+async function runAutomation({ projectName, prompts, targetUrl, options = {} }) {
   if (running) throw new Error("Already running.");
   running = true;
   paused = false;
   progressMessage = "Starting";
   currentLog = [];
+  const runId = ++lastRunId;
 
   const safeProject = sanitize(projectName);
   const projectDir = path.join(outputRoot, safeProject);
@@ -459,10 +697,24 @@ async function runAutomation({ projectName, prompts, targetUrl }) {
       setProgress(`Prompt ${i + 1}/${prompts.length} waiting for image generation`);
       const settled = await waitUntilGenerationSettles(i + 1, prompts.length);
       if (!settled) log(`Prompt ${i + 1} timed out.`);
-      setProgress(`Prompt ${i + 1}/${prompts.length} done. No download.`);
+      setProgress(`Prompt ${i + 1}/${prompts.length} done.`);
       await page.waitForTimeout(promptGapMs);
     }
 
+    let downloadedImages = [];
+    if (options.downloadImages) {
+      if (!options.imageDownloadDir) throw new Error("Image download folder is required.");
+      setProgress("Image download enabled. Collecting generated images.");
+      downloadedImages = await downloadGeneratedImages(projectDir, options.imageDownloadDir, runId);
+      setProgress(`Downloaded ${downloadedImages.length} image(s).`);
+    }
+
+    lastRunResult = {
+      id: runId,
+      projectName: safeProject,
+      projectDir,
+      downloadedImages
+    };
     setProgress(`Done. Output folder: ${projectDir}`);
     await fs.writeFile(path.join(projectDir, "log.txt"), currentLog.slice().reverse().join("\n"), "utf8");
   } finally {
@@ -485,8 +737,24 @@ app.post("/api/check-chatgpt", async (req, res) => {
 app.post("/api/run", async (req, res) => {
   const prompts = (req.body.prompts || []).map((value) => String(value || "").trim()).filter(Boolean).slice(0, maxPrompts);
   if (!prompts.length) return res.status(400).json({ ok: false, error: "No prompts." });
-  runAutomation({ projectName: req.body.projectName, prompts, targetUrl: req.body.targetUrl }).catch((error) => log(`ERROR: ${error.message}`));
+  runAutomation({
+    projectName: req.body.projectName,
+    prompts,
+    targetUrl: req.body.targetUrl,
+    options: req.body.options || {}
+  }).catch((error) => log(`ERROR: ${error.message}`));
   res.json({ ok: true });
+});
+
+app.post("/api/select-image-download-folder", async (_req, res) => {
+  try {
+    const folderPath = await selectFolderWithDialog();
+    if (!folderPath) return res.json({ ok: true, folderPath: "" });
+    await fs.mkdir(folderPath, { recursive: true });
+    res.json({ ok: true, folderPath });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 app.post("/api/pause", (_req, res) => {
@@ -506,11 +774,17 @@ app.post("/api/resume", (_req, res) => {
 });
 
 app.get("/api/status", (_req, res) => {
-  res.json({ running, paused, progressMessage, log: currentLog });
+  res.json({ running, paused, progressMessage, log: currentLog, lastRunResult });
 });
 
 app.get("/api/output-path", (_req, res) => {
   res.json({ outputRoot });
+});
+
+app.get("/api/downloaded-image/:key", async (req, res) => {
+  const filePath = downloadedFileMap.get(req.params.key);
+  if (!filePath) return res.status(404).send("Not found");
+  res.sendFile(filePath);
 });
 
 const port = Number(process.env.PORT || 3737);
