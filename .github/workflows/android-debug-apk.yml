@@ -42,11 +42,16 @@ jobs:
           gradle :app:assembleDebug --stacktrace 2>&1 | tee build.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
+            grep -E -i "(^e: |error:|FAILURE:|What went wrong|Execution failed|Could not|Unresolved reference|Cannot access|A failure occurred)" build.log > build-error-lines.txt || true
             {
               echo "Gradle build failed. Last 200 log lines:"
               tail -n 200 build.log
             } > build-error-summary.txt
-            echo "::error file=.github/workflows/android-debug-apk.yml,line=1::$(tail -n 80 build.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/:/%3A/g')"
+            if [ -s build-error-lines.txt ]; then
+              echo "::error file=.github/workflows/android-debug-apk.yml,line=1::$(cat build-error-lines.txt | head -n 30 | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/:/%3A/g')"
+            else
+              echo "::error file=.github/workflows/android-debug-apk.yml,line=1::$(tail -n 80 build.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/:/%3A/g')"
+            fi
             exit "$status"
           fi
 
@@ -64,6 +69,7 @@ jobs:
           path: |
             build.log
             build-error-summary.txt
+            build-error-lines.txt
 
       - name: Publish latest debug APK release
         uses: softprops/action-gh-release@v2
