@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">쇼츠 이미지 자동생성 v1.0</string>
+    <string name="accessibility_service_label">쇼츠 이미지 자동생성 접근성 서비스</string>
+    <string name="accessibility_service_description">ChatGPT 화면의 입력창, 전송 버튼, 이미지 영역을 찾아 프롬프트 입력과 이미지 저장을 자동화합니다.</string>
+</resources>
