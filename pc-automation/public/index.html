@@ -51,6 +51,8 @@
     <section>
       <label for="projectName">프로젝트명</label>
       <input id="projectName" value="shorts_project">
+      <label for="chatgptUrl" style="margin-top:10px;">ChatGPT 주소</label>
+      <input id="chatgptUrl" placeholder="https://chatgpt.com/g/.../c/...">
       <div class="controls">
         <button id="checkBtn" class="secondary" type="button">ChatGPT 연결 확인</button>
         <button id="pathBtn" class="secondary" type="button">저장 위치 보기</button>
@@ -382,9 +384,7 @@
 
     $("checkBtn").addEventListener("click", async () => {
       try {
-        const res = await fetch("/api/check-chatgpt");
-        const json = await res.json();
-        if (!res.ok || json.ok === false) throw new Error(json.error || "연결 확인 실패");
+        const json = await post("/api/check-chatgpt", { targetUrl: $("chatgptUrl").value });
         $("connectStatus").textContent = `browserContext: ${json.url || "ChatGPT 주소 없음"} / ${json.message} ${json.usingCdp ? "(기존 Edge 연결)" : "(자동화용 Edge)"}`;
         if (json.connected) alert(`연결됨\n${json.title || "ChatGPT"}\n${json.url}`);
       } catch (error) {
@@ -402,6 +402,7 @@
         } else {
           await post("/api/run", {
             projectName: $("projectName").value,
+            targetUrl: $("chatgptUrl").value,
             prompts
           });
         }

@@ -55,6 +55,15 @@ function isChatGptUrl(url) {
   return String(url || "").toLowerCase().includes("chatgpt.com");
 }
 
+function normalizeTargetUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  const parsed = new URL(withProtocol);
+  if (!isChatGptUrl(parsed.href)) throw new Error("Target URL must include chatgpt.com.");
+  return parsed.href;
+}
+
 function resetBrowserRefs() {
   browser = null;
   browserContext = null;
@@ -133,8 +142,20 @@ async function pickWorkingPage(context) {
   return selected;
 }
 
-async function ensureChatGptPage() {
+async function ensureChatGptPage(targetUrl = "") {
   await ensureBrowser();
+  const normalizedTarget = targetUrl ? normalizeTargetUrl(targetUrl) : "";
+  if (normalizedTarget) {
+    const pages = browserContext.pages().filter((candidate) => !candidate.isClosed());
+    const targetPage = [...pages].reverse().find((candidate) => candidate.url() === normalizedTarget || candidate.url().startsWith(normalizedTarget));
+    page = targetPage || page || pages[pages.length - 1] || await browserContext.newPage();
+    if (!isChatGptUrl(page.url()) || page.url() !== normalizedTarget) {
+      await page.goto(normalizedTarget, { waitUntil: "domcontentloaded" });
+    }
+    await page.bringToFront().catch(() => {});
+    return { found: true, page };
+  }
+
   page = await pickWorkingPage(browserContext);
   if (isChatGptUrl(page.url())) {
     await page.bringToFront().catch(() => {});
@@ -143,8 +164,8 @@ async function ensureChatGptPage() {
   return { found: false, page };
 }
 
-async function getConnectionStatus() {
-  const result = await ensureChatGptPage();
+async function getConnectionStatus(targetUrl = "") {
+  const result = await ensureChatGptPage(targetUrl);
   const title = page ? await page.title().catch(() => "") : "";
   const url = page ? page.url() : "";
   return {
@@ -375,7 +396,7 @@ async function waitUntilGenerationSettles(index, total) {
   return false;
 }
 
-async function runAutomation({ projectName, prompts }) {
+async function runAutomation({ projectName, prompts, targetUrl }) {
   if (running) throw new Error("Already running.");
   running = true;
   paused = false;
@@ -388,7 +409,7 @@ async function runAutomation({ projectName, prompts }) {
   await fs.writeFile(path.join(projectDir, "prompts.txt"), prompts.join("\n\n"), "utf8");
 
   try {
-    const result = await ensureChatGptPage();
+    const result = await ensureChatGptPage(targetUrl);
     if (!result.found) throw new Error("ChatGPT tab is not connected.");
 
     for (let i = 0; i < prompts.length; i++) {
@@ -411,9 +432,9 @@ async function runAutomation({ projectName, prompts }) {
   }
 }
 
-app.get("/api/check-chatgpt", async (_req, res) => {
+app.post("/api/check-chatgpt", async (req, res) => {
   try {
-    const status = await getConnectionStatus();
+    const status = await getConnectionStatus(req.body?.targetUrl);
     res.json({ ok: true, ...status });
   } catch (error) {
     resetBrowserRefs();
@@ -424,7 +445,7 @@ app.get("/api/check-chatgpt", async (_req, res) => {
 app.post("/api/run", async (req, res) => {
   const prompts = (req.body.prompts || []).map((value) => String(value || "").trim()).filter(Boolean).slice(0, maxPrompts);
   if (!prompts.length) return res.status(400).json({ ok: false, error: "No prompts." });
-  runAutomation({ projectName: req.body.projectName, prompts }).catch((error) => log(`ERROR: ${error.message}`));
+  runAutomation({ projectName: req.body.projectName, prompts, targetUrl: req.body.targetUrl }).catch((error) => log(`ERROR: ${error.message}`));
   res.json({ ok: true });
 });
 
