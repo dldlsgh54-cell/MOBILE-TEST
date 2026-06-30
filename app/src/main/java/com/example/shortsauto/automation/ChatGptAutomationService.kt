@@ -233,7 +233,12 @@ class ChatGptAutomationService : Service() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, buildNotification(status, ongoing = false, complete = true))
         releaseWakeLock()
-        stopForeground(STOP_FOREGROUND_DETACH)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_DETACH)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(false)
+        }
         stopSelf()
     }
 
