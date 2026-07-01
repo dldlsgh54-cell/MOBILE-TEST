@@ -316,7 +316,7 @@
       </section>
 
       <section class="panel">
-        <button id="runImageBtn" type="button">분할 이미지 다운로드</button>
+        <button id="runImageBtn" type="button">ZIP으로 다운로드</button>
         <p id="imageStatus" class="status">대기 중</p>
       </section>
 
@@ -575,17 +575,141 @@
       });
     }
 
-    async function downloadPieces() {
+    const crcTable = (() => {
+      const table = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let value = i;
+        for (let j = 0; j < 8; j++) {
+          value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+        }
+        table[i] = value >>> 0;
+      }
+      return table;
+    })();
+
+    function crc32(bytes) {
+      let crc = 0xffffffff;
+      for (const byte of bytes) {
+        crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+      }
+      return (crc ^ 0xffffffff) >>> 0;
+    }
+
+    function writeU16(bytes, value) {
+      bytes.push(value & 0xff, (value >>> 8) & 0xff);
+    }
+
+    function writeU32(bytes, value) {
+      bytes.push(value & 0xff, (value >>> 8) & 0xff, (value >>> 16) & 0xff, (value >>> 24) & 0xff);
+    }
+
+    function dosDateTime(date) {
+      const year = Math.max(1980, date.getFullYear());
+      const time = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+      const day = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+      return { time, day };
+    }
+
+    async function createZipBlob(files) {
+      const encoder = new TextEncoder();
+      const chunks = [];
+      const centralDirectory = [];
+      let offset = 0;
+      const { time, day } = dosDateTime(new Date());
+
+      for (const file of files) {
+        const data = new Uint8Array(await file.blob.arrayBuffer());
+        const nameBytes = encoder.encode(file.name);
+        const crc = crc32(data);
+        const localHeader = [];
+
+        writeU32(localHeader, 0x04034b50);
+        writeU16(localHeader, 20);
+        writeU16(localHeader, 0);
+        writeU16(localHeader, 0);
+        writeU16(localHeader, time);
+        writeU16(localHeader, day);
+        writeU32(localHeader, crc);
+        writeU32(localHeader, data.length);
+        writeU32(localHeader, data.length);
+        writeU16(localHeader, nameBytes.length);
+        writeU16(localHeader, 0);
+
+        chunks.push(new Uint8Array(localHeader), nameBytes, data);
+
+        const centralHeader = [];
+        writeU32(centralHeader, 0x02014b50);
+        writeU16(centralHeader, 20);
+        writeU16(centralHeader, 20);
+        writeU16(centralHeader, 0);
+        writeU16(centralHeader, 0);
+        writeU16(centralHeader, time);
+        writeU16(centralHeader, day);
+        writeU32(centralHeader, crc);
+        writeU32(centralHeader, data.length);
+        writeU32(centralHeader, data.length);
+        writeU16(centralHeader, nameBytes.length);
+        writeU16(centralHeader, 0);
+        writeU16(centralHeader, 0);
+        writeU16(centralHeader, 0);
+        writeU16(centralHeader, 0);
+        writeU32(centralHeader, 0);
+        writeU32(centralHeader, offset);
+        centralDirectory.push(new Uint8Array(centralHeader), nameBytes);
+
+        offset += localHeader.length + nameBytes.length + data.length;
+      }
+
+      const centralOffset = offset;
+      let centralSize = 0;
+      for (const chunk of centralDirectory) centralSize += chunk.length;
+      chunks.push(...centralDirectory);
+
+      const endRecord = [];
+      writeU32(endRecord, 0x06054b50);
+      writeU16(endRecord, 0);
+      writeU16(endRecord, 0);
+      writeU16(endRecord, files.length);
+      writeU16(endRecord, files.length);
+      writeU32(endRecord, centralSize);
+      writeU32(endRecord, centralOffset);
+      writeU16(endRecord, 0);
+      chunks.push(new Uint8Array(endRecord));
+
+      return new Blob(chunks, { type: "application/zip" });
+    }
+
+    function downloadBlob(blob, fileName) {
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    }
+
+    function zipFileName() {
+      const now = new Date();
+      const parts = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+        String(now.getHours()).padStart(2, "0"),
+        String(now.getMinutes()).padStart(2, "0"),
+        String(now.getSeconds()).padStart(2, "0")
+      ];
+      return `split_images_${parts.join("")}.zip`;
+    }
+
+    async function downloadZip() {
+      const files = [];
       for (const piece of pieces) {
         const blob = await piece.blobPromise;
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(blob);
-        link.download = piece.fileName;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        await new Promise((resolve) => setTimeout(resolve, 240));
+        files.push({ name: piece.fileName, blob });
       }
+      const zipBlob = await createZipBlob(files);
+      downloadBlob(zipBlob, zipFileName());
     }
 
     $("promptTab").addEventListener("click", () => showTool("prompt"));
@@ -654,9 +778,9 @@
           pieces.push(...splitImage(img, i + 1, cols, rows));
         }
         renderPreview();
-        $("imageStatus").textContent = `${pieces.length}개 이미지 다운로드를 시작합니다.`;
-        await downloadPieces();
-        $("imageStatus").textContent = `${pieces.length}개 이미지 다운로드를 요청했습니다.`;
+        $("imageStatus").textContent = `${pieces.length}개 이미지를 ZIP으로 묶는 중입니다.`;
+        await downloadZip();
+        $("imageStatus").textContent = `${pieces.length}개 이미지가 들어 있는 ZIP 다운로드를 요청했습니다.`;
       } catch (error) {
         $("imageStatus").textContent = error.message;
       }
