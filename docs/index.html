@@ -3,19 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>쇼츠 이미지 자동생성 v1.0</title>
+  <title>모바일 작업 도우미</title>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f7f9;
+      --bg: #f5f7fb;
       --surface: #ffffff;
-      --ink: #1c2430;
+      --ink: #162033;
       --muted: #667085;
-      --line: #d8dee8;
+      --line: #d9e0ea;
       --accent: #0f766e;
-      --accent-strong: #115e59;
-      --warn: #b45309;
+      --accent-soft: #e6fffb;
       --done: #15803d;
+      --warn: #b45309;
     }
     * { box-sizing: border-box; }
     body {
@@ -25,28 +25,31 @@
       color: var(--ink);
     }
     main {
-      width: min(980px, 100%);
+      width: min(920px, 100%);
       margin: 0 auto;
-      padding: 18px;
+      padding: 16px;
     }
     header {
-      display: flex;
-      gap: 12px;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 14px;
+      display: grid;
+      gap: 8px;
+      margin-bottom: 12px;
     }
     h1 {
       margin: 0;
-      font-size: clamp(24px, 6vw, 34px);
+      font-size: 28px;
       line-height: 1.15;
       letter-spacing: 0;
     }
-    .subtitle {
-      margin: 8px 0 0;
+    h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+    p {
+      margin: 0;
       color: var(--muted);
-      font-size: 14px;
       line-height: 1.45;
+      font-size: 14px;
     }
     .panel {
       background: var(--surface);
@@ -55,13 +58,19 @@
       padding: 14px;
       margin: 12px 0;
     }
+    .tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin: 12px 0;
+    }
     label {
       display: block;
       font-weight: 700;
       margin-bottom: 8px;
       font-size: 14px;
     }
-    textarea, input {
+    textarea, input, select {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -71,30 +80,15 @@
       color: var(--ink);
     }
     textarea {
-      min-height: 150px;
+      min-height: 138px;
       resize: vertical;
       line-height: 1.45;
-    }
-    .prompt-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-    }
-    .prompt textarea {
-      min-height: 118px;
-      font-size: 14px;
-    }
-    .controls {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 10px;
     }
     button, a.button {
       border: 1px solid transparent;
       border-radius: 8px;
-      min-height: 42px;
-      padding: 9px 13px;
+      min-height: 44px;
+      padding: 10px 13px;
       font: inherit;
       font-weight: 700;
       background: var(--accent);
@@ -104,41 +98,49 @@
       align-items: center;
       justify-content: center;
       cursor: pointer;
+      text-align: center;
     }
     button.secondary, a.secondary {
       background: #fff;
       color: var(--ink);
       border-color: var(--line);
     }
-    button.warn {
-      background: #fff7ed;
-      color: var(--warn);
-      border-color: #fed7aa;
+    button.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
     }
     button.done {
       background: #ecfdf3;
       color: var(--done);
       border-color: #bbf7d0;
     }
-    button:disabled {
-      opacity: .55;
-      cursor: not-allowed;
+    button.warn {
+      background: #fff7ed;
+      color: var(--warn);
+      border-color: #fed7aa;
     }
-    .status {
+    .controls {
       display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
+      margin-top: 10px;
     }
-    .progress {
-      height: 12px;
-      overflow: hidden;
-      background: #e5e7eb;
-      border-radius: 999px;
+    .controls.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
-    .bar {
-      height: 100%;
-      width: 0%;
-      background: var(--accent);
-      transition: width .2s ease;
+    .prompt-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .prompt textarea {
+      min-height: 116px;
+      font-size: 14px;
+    }
+    .current {
+      border-color: #99f6e4;
+      box-shadow: 0 0 0 2px rgba(20, 184, 166, .16);
     }
     .row {
       display: flex;
@@ -152,9 +154,23 @@
       font-size: 13px;
       line-height: 1.45;
     }
-    .current {
-      border-color: #99f6e4;
-      box-shadow: 0 0 0 2px rgba(20, 184, 166, .16);
+    .status {
+      color: var(--accent);
+      font-weight: 700;
+      margin-top: 10px;
+    }
+    .progress {
+      height: 12px;
+      overflow: hidden;
+      background: #e5e7eb;
+      border-radius: 999px;
+      margin-top: 8px;
+    }
+    .bar {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      transition: width .2s ease;
     }
     .log {
       white-space: pre-wrap;
@@ -162,69 +178,151 @@
       color: #f9fafb;
       border-radius: 8px;
       padding: 12px;
-      min-height: 110px;
+      min-height: 90px;
       font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
       font-size: 12px;
       overflow: auto;
     }
+    .image-options {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .option-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .preview-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .piece {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      background: #f8fafc;
+    }
+    .piece img {
+      width: 100%;
+      display: block;
+      border-radius: 6px;
+      background: #e5e7eb;
+    }
+    .piece span {
+      display: block;
+      margin-top: 6px;
+      font-size: 12px;
+      color: #475467;
+      overflow-wrap: anywhere;
+    }
     .hidden { display: none; }
     @media (max-width: 760px) {
       main { padding: 14px; }
-      header { display: block; }
-      .prompt-grid { grid-template-columns: 1fr; }
+      h1 { font-size: 25px; }
+      .prompt-grid, .image-options, .preview-grid { grid-template-columns: 1fr; }
+      .controls, .controls.three, .option-row { grid-template-columns: 1fr; }
       button, a.button { width: 100%; }
-      .controls { display: grid; grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
   <main>
     <header>
-      <div>
-        <h1>쇼츠 이미지 자동생성 v1.0</h1>
-        <p class="subtitle">HTML 보조판: 프롬프트 6개를 분리하고 순서대로 복사해서 ChatGPT에서 이미지 생성합니다.</p>
-      </div>
-      <a class="button secondary" href="https://chatgpt.com/" target="_blank" rel="noopener">ChatGPT 열기</a>
+      <h1>모바일 작업 도우미</h1>
+      <p>휴대폰 브라우저에서 프롬프트를 나누어 복사하거나, 이미지 파일을 여러 장으로 분할합니다.</p>
     </header>
 
-    <section class="panel">
-      <label for="projectName">프로젝트명</label>
-      <input id="projectName" value="shorts_project" autocomplete="off">
+    <nav class="tabs" aria-label="도구 선택">
+      <button id="promptTab" class="active" type="button">프롬프트 도우미</button>
+      <button id="imageTab" class="secondary" type="button">이미지 분할</button>
+    </nav>
+
+    <section id="promptTool">
+      <section class="panel">
+        <h2>프롬프트 분리</h2>
+        <label for="sourceText">전체 프롬프트</label>
+        <textarea id="sourceText" placeholder="Prompt 1: ...&#10;&#10;Prompt 2: ...&#10;&#10;또는 1. / 2. 형식으로 붙여넣으세요."></textarea>
+        <div class="controls three">
+          <button id="pasteBtn" type="button">붙여넣기</button>
+          <button id="splitBtn" type="button">자동 분리</button>
+          <button id="clearBtn" class="secondary" type="button">초기화</button>
+        </div>
+        <p class="muted">모바일 브라우저 보안상 ChatGPT 자동 조작은 할 수 없습니다. 분리한 프롬프트를 복사해서 ChatGPT 앱이나 웹에 직접 붙여넣어 주세요.</p>
+      </section>
+
+      <section class="panel">
+        <div class="row">
+          <strong id="statusText">프롬프트를 입력하세요</strong>
+          <span class="muted" id="counterText">0/6 완료</span>
+        </div>
+        <div class="progress"><div class="bar" id="progressBar"></div></div>
+        <div class="controls three">
+          <button id="copyCurrentBtn" type="button">현재 복사</button>
+          <button id="nextBtn" class="secondary" type="button">다음</button>
+          <button id="doneBtn" class="done" type="button">완료 표시</button>
+        </div>
+      </section>
+
+      <section class="prompt-grid" id="promptGrid"></section>
+
+      <section class="panel">
+        <div class="row">
+          <strong>로그</strong>
+          <button id="copyAllBtn" class="secondary" type="button">전체 복사</button>
+        </div>
+        <div id="log" class="log">아직 기록이 없습니다.</div>
+      </section>
     </section>
 
-    <section class="panel">
-      <label for="sourceText">ChatGPT에서 받은 이미지 프롬프트 전체</label>
-      <textarea id="sourceText" placeholder="컷1: ...&#10;&#10;이미지2: ...&#10;&#10;Prompt3: ... 형식으로 붙여넣으세요."></textarea>
-      <div class="controls">
-        <button id="pasteBtn" type="button">클립보드 붙여넣기</button>
-        <button id="splitBtn" type="button">프롬프트 1~6 자동 분리</button>
-        <button id="clearBtn" class="secondary" type="button">초기화</button>
-      </div>
-      <p class="muted">브라우저 보안상 ChatGPT를 자동 조작하거나 이미지를 자동 저장할 수는 없습니다. 대신 각 프롬프트를 한 번에 복사하고 진행 상태를 기록합니다.</p>
-    </section>
+    <section id="imageTool" class="hidden">
+      <section class="panel">
+        <h2>이미지 분할</h2>
+        <label for="sourceImages">이미지 선택</label>
+        <input id="sourceImages" type="file" accept="image/*" multiple>
+        <p id="fileStatus" class="status">선택한 이미지 없음</p>
+      </section>
 
-    <section class="panel status">
-      <div class="row">
-        <strong id="statusText">대기 중</strong>
-        <span class="muted" id="counterText">0/6 완료</span>
-      </div>
-      <div class="progress"><div class="bar" id="progressBar"></div></div>
-      <div class="controls">
-        <button id="copyCurrentBtn" type="button">현재 프롬프트 복사</button>
-        <button id="nextBtn" class="secondary" type="button">다음 프롬프트</button>
-        <button id="doneBtn" class="done" type="button">현재 완료 표시</button>
-        <button id="downloadBtn" class="secondary" type="button">prompts/log 저장</button>
-      </div>
-    </section>
+      <section class="panel image-options">
+        <div>
+          <label for="splitCols">가로 칸 수</label>
+          <input id="splitCols" type="number" min="1" max="20" value="4">
+        </div>
+        <div>
+          <label for="splitRows">세로 칸 수</label>
+          <input id="splitRows" type="number" min="1" max="20" value="2">
+        </div>
+      </section>
 
-    <section class="prompt-grid" id="promptGrid"></section>
+      <section class="panel">
+        <label>출력 비율</label>
+        <div class="option-row" id="aspectOptions">
+          <button class="active" type="button" data-value="auto">원본</button>
+          <button class="secondary" type="button" data-value="9:16">9:16</button>
+          <button class="secondary" type="button" data-value="16:9">16:9</button>
+          <button class="secondary" type="button" data-value="1:1">1:1</button>
+        </div>
+      </section>
 
-    <section class="panel">
-      <div class="row">
-        <strong>로그</strong>
-        <button id="copyAllBtn" class="secondary" type="button">전체 프롬프트 복사</button>
-      </div>
-      <div id="log" class="log">아직 기록이 없습니다.</div>
+      <section class="panel">
+        <label>해상도</label>
+        <div class="option-row" id="resolutionOptions">
+          <button class="active" type="button" data-value="original">원본</button>
+          <button class="secondary" type="button" data-value="2k">2K</button>
+          <button class="secondary" type="button" data-value="4k">4K</button>
+          <button class="secondary" type="button" data-value="1080">1080p</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <button id="runImageBtn" type="button">분할 이미지 다운로드</button>
+        <p id="imageStatus" class="status">대기 중</p>
+      </section>
+
+      <section class="panel">
+        <div id="preview" class="preview-grid"></div>
+      </section>
     </section>
   </main>
 
@@ -235,9 +333,11 @@
       done: Array(6).fill(false),
       log: []
     };
-
     const $ = (id) => document.getElementById(id);
     const grid = $("promptGrid");
+    let aspectRatio = "auto";
+    let resolution = "original";
+    let pieces = [];
 
     function stamp() {
       return new Date().toLocaleTimeString("ko-KR", { hour12: false });
@@ -249,16 +349,23 @@
       saveLocal();
     }
 
+    function showTool(tool) {
+      const prompt = tool === "prompt";
+      $("promptTool").classList.toggle("hidden", !prompt);
+      $("imageTool").classList.toggle("hidden", prompt);
+      $("promptTab").className = prompt ? "active" : "secondary";
+      $("imageTab").className = prompt ? "secondary" : "active";
+    }
+
     function parsePrompts(raw) {
       const text = raw.replace(/\r/g, "").trim();
       if (!text) return [];
-
       const lines = text.split("\n");
       const blocks = [];
       let current = "";
       let activeBlock = false;
-      const label = /^(?:#{1,6}\s*)?(?:컷|이미지|프롬프트|prompt|cut|image)\s*([1-6])\s*(?:[\).:\-]|번)?\s*(.*)$/i;
-      const numberLabel = /^([1-6])\s*[\).:\-]\s*(.*)$/;
+      const label = /^(?:#{1,6}\s*)?(?:컷|이미지|프롬프트|prompt|cut|image)\s*([0-9]+)\s*(?:[\).:\-]|번)?\s*(.*)$/i;
+      const numberLabel = /^([0-9]+)\s*[\).:\-]\s*(.*)$/;
 
       function flush() {
         const value = current.trim();
@@ -275,8 +382,7 @@
         }
         const match = line.match(label);
         const numberMatch = line.match(numberLabel);
-        const isLabel = Boolean(match || numberMatch);
-        if (isLabel) {
+        if (match || numberMatch) {
           flush();
           activeBlock = true;
           current = ((match && match[2]) || (numberMatch && numberMatch[2]) || "").trim();
@@ -287,13 +393,12 @@
       flush();
       if (blocks.length) return blocks.slice(0, 6);
 
-      const paragraphs = text.split(/\n\s*\n/).map(v => v.trim()).filter(Boolean);
+      const paragraphs = text.split(/\n\s*\n/).map((value) => value.trim()).filter(Boolean);
       if (paragraphs.length >= 2) return paragraphs.slice(0, 6);
-
-      return lines.map(v => v.trim().replace(/^[-*]\s*/, "")).filter(v => v.length >= 8).slice(0, 6);
+      return lines.map((value) => value.trim().replace(/^[-*]\s*/, "")).filter((value) => value.length >= 8).slice(0, 6);
     }
 
-    function render() {
+    function renderPrompts() {
       grid.innerHTML = "";
       state.prompts.forEach((prompt, index) => {
         const box = document.createElement("section");
@@ -309,20 +414,18 @@
         grid.appendChild(box);
         box.querySelector("textarea").value = prompt;
       });
-
-      grid.querySelectorAll("textarea").forEach(area => {
+      grid.querySelectorAll("textarea").forEach((area) => {
         area.addEventListener("input", (event) => {
           state.prompts[Number(event.target.dataset.index)] = event.target.value;
           saveLocal();
         });
       });
-      grid.querySelectorAll("[data-copy]").forEach(btn => {
-        btn.addEventListener("click", () => copyPrompt(Number(btn.dataset.copy)));
+      grid.querySelectorAll("[data-copy]").forEach((button) => {
+        button.addEventListener("click", () => copyPrompt(Number(button.dataset.copy)));
       });
-      grid.querySelectorAll("[data-done]").forEach(btn => {
-        btn.addEventListener("click", () => markDone(Number(btn.dataset.done)));
+      grid.querySelectorAll("[data-done]").forEach((button) => {
+        button.addEventListener("click", () => markDone(Number(button.dataset.done)));
       });
-
       updateStatus();
     }
 
@@ -332,7 +435,7 @@
       $("progressBar").style.width = `${Math.round(doneCount / 6 * 100)}%`;
       $("statusText").textContent = state.prompts[state.current]
         ? `현재 프롬프트 ${state.current + 1}`
-        : "프롬프트를 입력하거나 자동 분리하세요";
+        : "프롬프트를 입력하세요";
       saveLocal();
     }
 
@@ -360,7 +463,7 @@
       if (ok) {
         state.current = index;
         addLog(`프롬프트 ${index + 1} 복사`);
-        render();
+        renderPrompts();
       }
     }
 
@@ -368,16 +471,16 @@
       state.done[index] = true;
       state.current = Math.min(5, index + 1);
       addLog(`프롬프트 ${index + 1} 완료 표시`);
-      render();
+      renderPrompts();
     }
 
     function saveLocal() {
-      localStorage.setItem("shortsAutoHtml", JSON.stringify(state));
+      localStorage.setItem("mobileWorkHelper", JSON.stringify(state));
     }
 
     function loadLocal() {
       try {
-        const saved = JSON.parse(localStorage.getItem("shortsAutoHtml") || "{}");
+        const saved = JSON.parse(localStorage.getItem("mobileWorkHelper") || "{}");
         if (Array.isArray(saved.prompts)) state.prompts = saved.prompts.slice(0, 6).concat(Array(6).fill("")).slice(0, 6);
         if (Array.isArray(saved.done)) state.done = saved.done.slice(0, 6).concat(Array(6).fill(false)).slice(0, 6);
         if (Array.isArray(saved.log)) state.log = saved.log;
@@ -385,18 +488,108 @@
       } catch {}
     }
 
-    function downloadFile(name, content) {
-      const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = name;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+    function bindOptions(containerId, onChange) {
+      const container = $(containerId);
+      container.querySelectorAll("button").forEach((button) => {
+        button.addEventListener("click", () => {
+          container.querySelectorAll("button").forEach((item) => {
+            item.className = "secondary";
+          });
+          button.className = "active";
+          onChange(button.dataset.value);
+        });
+      });
     }
 
+    function loadImage(file) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error(`${file.name} 이미지를 읽지 못했습니다.`));
+        img.src = URL.createObjectURL(file);
+      });
+    }
+
+    function ratioToNumber(value) {
+      if (value === "auto") return null;
+      const parts = value.split(":").map(Number);
+      return parts[0] / parts[1];
+    }
+
+    function fitCropToRatio(width, height, ratio) {
+      if (!ratio) return { width, height, offsetX: 0, offsetY: 0 };
+      const current = width / height;
+      if (current > ratio) {
+        const targetW = Math.floor(height * ratio);
+        return { width: targetW, height, offsetX: Math.floor((width - targetW) / 2), offsetY: 0 };
+      }
+      const targetH = Math.floor(width / ratio);
+      return { width, height: targetH, offsetX: 0, offsetY: Math.floor((height - targetH) / 2) };
+    }
+
+    function resolveOutputSize(width, height) {
+      if (resolution === "original") return { width, height };
+      const ratio = ratioToNumber(aspectRatio) || (width / height);
+      const portrait = ratio <= 1;
+      if (resolution === "1080") return portrait ? { width: 1080, height: 1920 } : { width: 1920, height: 1080 };
+      const longEdge = resolution === "4k" ? 3840 : 2560;
+      const shortEdge = resolution === "4k" ? 2160 : 1440;
+      return portrait ? { width: shortEdge, height: longEdge } : { width: longEdge, height: shortEdge };
+    }
+
+    function splitImage(img, sourceIndex, cols, rows) {
+      const cellW = Math.floor(img.naturalWidth / cols);
+      const cellH = Math.floor(img.naturalHeight / rows);
+      const crop = fitCropToRatio(cellW, cellH, ratioToNumber(aspectRatio));
+      const nextPieces = [];
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+          const pieceIndex = nextPieces.length + 1;
+          const outputSize = resolveOutputSize(crop.width, crop.height);
+          const canvas = document.createElement("canvas");
+          canvas.width = outputSize.width;
+          canvas.height = outputSize.height;
+          const ctx = canvas.getContext("2d", { alpha: false });
+          ctx.imageSmoothingEnabled = outputSize.width !== crop.width || outputSize.height !== crop.height;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(img, col * cellW + crop.offsetX, row * cellH + crop.offsetY, crop.width, crop.height, 0, 0, outputSize.width, outputSize.height);
+          nextPieces.push({
+            fileName: `${sourceIndex}-${pieceIndex}.png`,
+            width: outputSize.width,
+            height: outputSize.height,
+            url: canvas.toDataURL("image/png"),
+            blobPromise: new Promise((resolve) => canvas.toBlob(resolve, "image/png"))
+          });
+        }
+      }
+      return nextPieces;
+    }
+
+    function renderPreview() {
+      $("preview").innerHTML = "";
+      pieces.slice(0, 12).forEach((piece) => {
+        const item = document.createElement("div");
+        item.className = "piece";
+        item.innerHTML = `<img src="${piece.url}" alt="${piece.fileName}"><span>${piece.fileName} / ${piece.width}x${piece.height}</span>`;
+        $("preview").appendChild(item);
+      });
+    }
+
+    async function downloadPieces() {
+      for (const piece of pieces) {
+        const blob = await piece.blobPromise;
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = piece.fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        await new Promise((resolve) => setTimeout(resolve, 240));
+      }
+    }
+
+    $("promptTab").addEventListener("click", () => showTool("prompt"));
+    $("imageTab").addEventListener("click", () => showTool("image"));
     $("pasteBtn").addEventListener("click", async () => {
       try {
         $("sourceText").value = await navigator.clipboard.readText();
@@ -405,7 +598,6 @@
         alert("브라우저가 클립보드 읽기를 막았습니다. 직접 붙여넣어 주세요.");
       }
     });
-
     $("splitBtn").addEventListener("click", () => {
       const parsed = parsePrompts($("sourceText").value);
       if (!parsed.length) {
@@ -418,9 +610,8 @@
       });
       state.current = 0;
       addLog(`프롬프트 ${parsed.length}개 자동 분리`);
-      render();
+      renderPrompts();
     });
-
     $("clearBtn").addEventListener("click", () => {
       if (!confirm("입력값과 진행 상태를 초기화할까요?")) return;
       state.prompts = Array(6).fill("");
@@ -428,31 +619,53 @@
       state.current = 0;
       state.log = [];
       $("sourceText").value = "";
-      localStorage.removeItem("shortsAutoHtml");
-      render();
+      localStorage.removeItem("mobileWorkHelper");
       $("log").textContent = "아직 기록이 없습니다.";
+      renderPrompts();
     });
-
     $("copyCurrentBtn").addEventListener("click", () => copyPrompt(state.current));
     $("nextBtn").addEventListener("click", () => {
       state.current = Math.min(5, state.current + 1);
       addLog(`프롬프트 ${state.current + 1}로 이동`);
-      render();
+      renderPrompts();
     });
     $("doneBtn").addEventListener("click", () => markDone(state.current));
     $("copyAllBtn").addEventListener("click", async () => {
-      const all = state.prompts.map((p, i) => `Prompt ${i + 1}: ${p}`).join("\n\n");
+      const all = state.prompts.map((prompt, index) => `Prompt ${index + 1}: ${prompt}`).join("\n\n");
       if (await copyText(all)) addLog("전체 프롬프트 복사");
     });
-    $("downloadBtn").addEventListener("click", () => {
-      const project = ($("projectName").value || "shorts_project").replace(/[\\/:*?"<>|]/g, "_");
-      const prompts = state.prompts.map((p, i) => `Prompt ${i + 1}\n${p}`).join("\n\n");
-      const log = state.log.join("\n");
-      downloadFile(`${project}_prompts_and_log.txt`, `${prompts}\n\n--- log ---\n${log}\n`);
+    $("sourceImages").addEventListener("change", () => {
+      const count = $("sourceImages").files.length;
+      $("fileStatus").textContent = count ? `${count}개 이미지 선택됨` : "선택한 이미지 없음";
+    });
+    $("runImageBtn").addEventListener("click", async () => {
+      const files = [...$("sourceImages").files].filter((file) => file.type.startsWith("image/"));
+      if (!files.length) {
+        alert("먼저 이미지를 선택하세요.");
+        return;
+      }
+      const cols = Math.max(1, Math.min(20, Number($("splitCols").value || 4)));
+      const rows = Math.max(1, Math.min(20, Number($("splitRows").value || 2)));
+      pieces = [];
+      $("imageStatus").textContent = "이미지를 분할 중입니다.";
+      try {
+        for (let i = 0; i < files.length; i++) {
+          const img = await loadImage(files[i]);
+          pieces.push(...splitImage(img, i + 1, cols, rows));
+        }
+        renderPreview();
+        $("imageStatus").textContent = `${pieces.length}개 이미지 다운로드를 시작합니다.`;
+        await downloadPieces();
+        $("imageStatus").textContent = `${pieces.length}개 이미지 다운로드를 요청했습니다.`;
+      } catch (error) {
+        $("imageStatus").textContent = error.message;
+      }
     });
 
+    bindOptions("aspectOptions", (value) => { aspectRatio = value; });
+    bindOptions("resolutionOptions", (value) => { resolution = value; });
     loadLocal();
-    render();
+    renderPrompts();
     if (state.log.length) $("log").textContent = state.log.join("\n");
   </script>
 </body>
